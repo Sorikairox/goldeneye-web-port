@@ -269,7 +269,8 @@ static long nfills, capfills;
  * 2-3 bytes within 16 of the prediction, 1 byte only exactly at it; once per symbol, when nothing
  * is found locally, a 64 KiB window re-anchors on a piece of 6+ bytes. Mixed-width structs (s16
  * pairs next to an f32 next to u8[4]) are matched as 4-byte units at 4-aligned stream offsets, each
- * unit in its own byte order (>= 8 bytes, >= 2 non-zero units). Every accepted piece is exact
+ * unit in its own byte order, or split into two 16-bit halves each as is or swapped (an s16 next
+ * to two s8) (>= 8 bytes, >= 2 non-zero units). Every accepted piece is exact
  * by construction (the bytes are equal); the self-check below proves the whole table. */
 static const char *g_debug;   /* -d SUBSTRING: trace pass 2 for matching symbols */
 static uint8_t *ptrmask;
@@ -411,6 +412,15 @@ static void search_mixed(int base, long pred, long win, long p, long fo, long en
                 Seg *g = &segs[sib(base, o, g_nbase)];
                 if (sp + L + 4 <= g->n && !memcmp(g->p + sp + L, x, 4)) hit = o;
             }
+            if (hit < 0) {   /* halves in different orders (s16 next to two s8): 16-bit units */
+                Seg *g0 = &segs[sib(base, 0, g_nbase)], *g2 = &segs[sib(base, 2, g_nbase)];
+                int h[2] = { -1, -1 };
+                for (int k = 0; k < 2 && sp + L + 4 <= g0->n; k++) {
+                    if (!memcmp(g0->p + sp + L + 2 * k, x + 2 * k, 2)) h[k] = 0;
+                    else if (!memcmp(g2->p + sp + L + 2 * k, x + 2 * k, 2)) h[k] = 2;
+                }
+                if (h[0] >= 0 && h[1] >= 0) hit = 10 + 3 * h[0] + h[1];
+            }
             if (hit < 0) break;
             ord[L / 4] = hit;
             nzu += (x[0] | x[1] | x[2] | x[3]) != 0;
@@ -514,6 +524,15 @@ static long pass2(uint8_t *tmpl, long minrun)
                 long u0 = best.u0, mlen = best.len + (p - u0);
                 for (long u = 0; u < mlen; u += 4) {
                     if (!(img[u0 + u] | img[u0 + u + 1] | img[u0 + u + 2] | img[u0 + u + 3])) continue;
+                    if (best.mord[u / 4] >= 10) {   /* split unit: two 16-bit entries */
+                        int hh[2] = { (best.mord[u / 4] - 10) / 3, (best.mord[u / 4] - 10) % 3 };
+                        for (int k = 0; k < 2; k++)
+                            if (img[u0 + u + 2 * k] | img[u0 + u + 2 * k + 1]) {
+                                add_fill(tmpl, u0 + u + 2 * k, 2, sib(base, hh[k], g_nbase), best.src + u + 2 * k);
+                                total += 2;
+                            }
+                        continue;
+                    }
                     long v = u + 4;
                     while (v < mlen && best.mord[v / 4] == best.mord[u / 4] &&
                            (img[u0 + v] | img[u0 + v + 1] | img[u0 + v + 2] | img[u0 + v + 3])) v += 4;
