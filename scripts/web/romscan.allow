@@ -1,0 +1,6 @@
+# romscan allowlist (tools_web/romscan_attr.py): map input names whose ROM-matching runs are not
+# ROM-derived data but third-party constants that happen to occur in the ROM too. Keep it short and
+# justify every line; never list game or asset objects here (fill them instead, docs/web/ROMDATA.md).
+libz.a(inftrees.c.o)          # zlib's deflate length/distance base tables (RFC 1951); the game ships its own inflate with the same tables
+libSDL2.a(SDL_keyboard.c.o)   # SDL's default keymap: 76 bytes of ASCII order that coincide with a sorted character table in the ROM
+libSDL2.a(SDL_emscriptenevents.c.o)  # same ASCII run in SDL's Emscripten keycode table
