@@ -15,7 +15,13 @@ const ch = spawn(CH, ['--headless=new', `--user-data-dir=${prof}`, `--remote-deb
   '--mute-audio', '--autoplay-policy=no-user-gesture-required', `--use-angle=${process.env.PROBE_ANGLE || 'swiftshader'}`, '--enable-unsafe-swiftshader',
   '--window-size=800,900', 'about:blank'], { stdio: 'ignore' });
 const done = (code) => { try { ch.kill('SIGKILL'); } catch (e) {} try { fs.rmSync(prof, { recursive: true, force: true }); } catch (e) {} process.exit(code); };
-setTimeout(() => { console.log('probe: timeout'); done(2); }, (+secs + 60) * 1000);
+// the console is streamed to <outdir>/console.log as it arrives (with seconds since navigation), so a
+// hung page still leaves its last lines behind
+const lines = [];
+const logf = fs.openSync(path.join(outdir, 'console.log'), 'w');
+let tNav = Date.now();
+const addLine = (l) => { lines.push(l); fs.writeSync(logf, `${((Date.now() - tNav) / 1000).toFixed(2)} ${l}\n`); };
+setTimeout(() => { console.log('probe: timeout; last console lines:'); for (const l of lines.slice(-15)) console.log(l.slice(0, 300)); done(2); }, (+secs + 60) * 1000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let page;
 for (let i = 0; i < 60 && !page; i++) {
@@ -25,25 +31,29 @@ for (let i = 0; i < 60 && !page; i++) {
 if (!page) { console.log('probe: no DevTools page'); done(2); }
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener('open', r));
-let id = 0; const pending = new Map(); const lines = [];
+let id = 0; const pending = new Map();
 ws.addEventListener('message', (m) => {
   const d = JSON.parse(m.data);
-  if (d.method === 'Runtime.consoleAPICalled') lines.push(d.params.args.map((a) => a.value ?? a.description ?? '').join(' '));
-  if (d.method === 'Runtime.exceptionThrown') lines.push('EXCEPTION: ' + (d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text));
-  if (d.method === 'Inspector.targetCrashed') lines.push('PROBE: renderer CRASHED (tab gone; often out of memory)');
-  if (d.method === 'Log.entryAdded') lines.push(`[${d.params.entry.level}] ${d.params.entry.text}`);
+  if (d.method === 'Runtime.consoleAPICalled') addLine(d.params.args.map((a) => a.value ?? a.description ?? '').join(' '));
+  if (d.method === 'Runtime.exceptionThrown') addLine('EXCEPTION: ' + (d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text));
+  if (d.method === 'Inspector.targetCrashed') addLine('PROBE: renderer CRASHED (tab gone; often out of memory)');
+  if (d.method === 'Log.entryAdded') addLine(`[${d.params.entry.level}] ${d.params.entry.text}`);
   if (pending.has(d.id)) { pending.get(d.id)(d); pending.delete(d.id); }
 });
 const call = (method, params = {}) => new Promise((r) => { pending.set(++id, r); ws.send(JSON.stringify({ id, method, params })); });
 await call('Runtime.enable'); await call('Log.enable'); await call('Inspector.enable'); await call('Page.enable');
+// PROBE_DEBUG=1: enable the debugger before navigating (a busy page may never process a late
+// Debugger.enable), so the stack dump below can pause a stuck main thread
+if (process.env.PROBE_DEBUG) await call('Debugger.enable');
 if (process.env.PROBE_PROFILE) { await call('Profiler.enable'); await call('Profiler.setSamplingInterval', { interval: 500 }); }
-await call('Page.navigate', { url });
+tNav = Date.now(); await call('Page.navigate', { url });
 if (process.env.PROBE_PROFILE) setTimeout(() => call('Profiler.start'), +process.env.PROBE_PROFILE * 1000);
 const t0 = Date.now();
 let stacked = false, paused = null;
 ws.addEventListener('message', (m) => { const d = JSON.parse(m.data); if (d.method === 'Debugger.paused') paused = d.params; });
 const stack = async () => {
-  call("Debugger.enable"); await sleep(3000); call('Debugger.pause');
+  if (!process.env.PROBE_DEBUG) { call('Debugger.enable'); await sleep(3000); }
+  call('Debugger.pause');
   for (let i = 0; i < 160 && !paused; i++) await sleep(250);
   if (!paused) { console.log('probe: could not pause the page'); return; }
   console.log('probe: main thread stack:\n' + paused.callFrames.slice(0, 25).map((f) => '  at ' + (f.functionName || '?')).join('\n'));
@@ -78,7 +88,6 @@ if (process.env.PROBE_PROFILE) {
 }
 // compact console: collapse consecutive duplicates, print the last 120 lines
 const out = []; for (const l of lines) { if (out.length && out[out.length - 1].l === l) out[out.length - 1].n++; else out.push({ l, n: 1 }); }
-fs.writeFileSync(path.join(outdir, 'console.log'), lines.join('\n') + '\n');
 console.log(`probe: ${lines.length} console lines (full: ${path.join(outdir, 'console.log')}); last:`);
 for (const { l, n } of out.slice(-120)) console.log((n > 1 ? `(${n}x) ` : '') + l.slice(0, 400));
 done(0);

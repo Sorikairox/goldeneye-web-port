@@ -88,6 +88,12 @@ async function start(rom) {
     print: (s) => log(s),
     printErr: (s) => log(s),
     noInitialRun: true,
+    // dev/test: ?env=NAME=VALUE,NAME2=VALUE2 sets C environment variables (getenv) before main()
+    preRun: [() => {
+      for (const kv of (params.get('env') || '').split(',').filter(Boolean)) {
+        const i = kv.indexOf('='); Module.ENV[i < 0 ? kv : kv.slice(0, i)] = i < 0 ? '1' : kv.slice(i + 1);
+      }
+    }],
     onAbort: (w) => { log('[page] ABORT: ' + w); status('crashed: ' + w); },
     onRuntimeInitialized() {
       const FS = Module.FS;
@@ -101,7 +107,9 @@ async function start(rom) {
       FS.chdir('/');
       status('');
       log('[page] calling main()');
-      try { Module.callMain([]); } catch (e) { if (e !== 'unwind') { log('[page] main threw: ' + e); throw e; } }
+      // ?args=-level_09+-foo passes command-line arguments (as on native)
+      const args = (params.get('args') || '').split(/[ +]/).filter(Boolean);
+      try { Module.callMain(args); } catch (e) { if (e !== 'unwind') { log('[page] main threw: ' + e); throw e; } }
     },
   };
   const s = document.createElement('script');

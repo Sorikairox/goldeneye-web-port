@@ -105,6 +105,14 @@ static void gfx_sdl_init(const struct GfxWindowInitSettings *set) {
     // keyboard (Steam Deck Game Mode popped one at every launch). Literal
     // hint name: older SDL2 headers lack the macro; unknown hints are ignored.
     SDL_SetHint("SDL_ENABLE_SCREEN_KEYBOARD", "0");
+#ifdef __EMSCRIPTEN__
+    // Web (GE_WEB): with ASYNCIFY linked in, SDL's SDL_GL_SwapWindow and SDL_Delay call
+    // emscripten_sleep() to "give the browser a frame". The game threads are Emscripten fibers
+    // (port/src/web/webkernel.c) and the browser loop already returns every frame: a sleep from
+    // inside a fiber unwinds the fiber's stack as if it were the main loop's, pauses the main loop
+    // and later rewinds into the wrong context -- the hang after the Rareware logo (G2).
+    SDL_SetHint(SDL_HINT_EMSCRIPTEN_ASYNCIFY, "0");
+#endif
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         sysFatalError("Could not init SDL:\n%s", SDL_GetError());

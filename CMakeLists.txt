@@ -777,8 +777,9 @@ if(EMSCRIPTEN)
     -sGL_ENABLE_GET_PROC_ADDRESS=1
     -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=65536
     -sEXIT_RUNTIME=0 -sINVOKE_RUN=0
-    -sEXPORTED_RUNTIME_METHODS=FS,callMain,ccall
+    -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain,ccall
     -sFORCE_FILESYSTEM=1 -sENVIRONMENT=web
+    -Wl,--wrap=emscripten_sleep -Wl,--wrap=alCSPGetState
     -Wl,-Map=${CMAKE_BINARY_DIR}/ge007.map)
 endif()
 message(STATUS "Output binary: ${BIN_NAME}")

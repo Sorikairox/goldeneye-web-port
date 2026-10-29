@@ -17,6 +17,8 @@
 #ifndef PORT_WEB_WEBKERNEL_H
 #define PORT_WEB_WEBKERNEL_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,6 +45,9 @@ int webkernelInFiber(void);
  * Every animation frame: pump(), then retrace() once per due console retrace
  * (period_us, catch-up capped), then run the ready fibers until all block. */
 void webkernelMainLoop(void (*pump)(void), void (*retrace)(void), unsigned period_us);
+
+/* Debug trace point: logged from frame GE_WKTRACE on, always kept in a ring. */
+void webkernelTrace(const char *tag, uintptr_t arg);
 
 /* Provided by libultra.c: describe a wait object for the stall report. */
 void portWebDescribeWait(const void *what, char *buf, int len);

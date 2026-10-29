@@ -1328,10 +1328,19 @@ void osSpTaskLoad(OSTask *t) { (void)t; /* nothing to load on the host */ }
 static void portRenderGfxTask(Gfx *dl)
 {
     uint64_t t0 = sysGetMicroseconds();
+#if defined(GE_WEB)
+    webkernelTrace("gfx begin", (uintptr_t)dl);
+#endif
     videoStartFrame();
     videoSyncSplitScreen();
     gfx_run(dl);
+#if defined(GE_WEB)
+    webkernelTrace("gfx run done", 0);
+#endif
     videoEndFrame();
+#if defined(GE_WEB)
+    webkernelTrace("gfx end", 0);
+#endif
     g_lastFrameUs = sysGetMicroseconds();
     if (++g_framesRendered <= 5 || (g_framesRendered % 300) == 0)
         sysLogPrintf(LOG_NOTE, "frame %d rendered in %llu us",

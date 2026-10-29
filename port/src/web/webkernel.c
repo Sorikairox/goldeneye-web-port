@@ -17,6 +17,7 @@
 #include <emscripten/fiber.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "webkernel.h"
 #include "platform.h"
@@ -62,10 +63,28 @@ static double s_periodMs;
 static double s_nextRetraceMs;
 static unsigned s_frames;
 
+/* Debug trace (GE_WKTRACE=<frame>, page: ?env=GE_WKTRACE=800): from that browser frame on, log every
+ * fiber switch and every webkernelTrace() point, so the last lines before a hang name the thread and
+ * the place. Every event also goes into a small ring (ge_web_wk_ring) that a debugger can read. */
+static unsigned s_traceFrom = 0;
+typedef struct { unsigned frame; int tid; const char *tag; uintptr_t arg; } WkEvent;
+#define WK_RING 256
+WkEvent ge_web_wk_ring[WK_RING];
+unsigned ge_web_wk_ringPos;
+
+void webkernelTrace(const char *tag, uintptr_t arg)
+{
+    WkEvent *e = &ge_web_wk_ring[ge_web_wk_ringPos++ % WK_RING];
+    e->frame = s_frames; e->tid = s_cur ? s_cur->id : -1; e->tag = tag; e->arg = arg;
+    if (s_traceFrom && s_frames >= s_traceFrom)
+        sysLogPrintf(LOG_NOTE, "wk %u t%d %s 0x%llx", s_frames, e->tid, tag, (unsigned long long)arg);
+}
+
 static void wkInit(void)
 {
     if (s_inited) return;
     s_inited = 1;
+    { const char *e = getenv("GE_WKTRACE"); if (e) s_traceFrom = (unsigned)strtoul(e, NULL, 0); }
     emscripten_fiber_init_from_current_context(&s_mainFiber, s_mainAstack, sizeof s_mainAstack);
 }
 
@@ -138,6 +157,7 @@ void webkernelWait(const void *what)
     s_cur->state = WK_WAITING;
     s_cur->waitSeq = s_signalSeq;
     s_cur->what = what;
+    webkernelTrace("wait", (uintptr_t)what);
     wkSwitchOut();
 }
 
@@ -169,6 +189,7 @@ void webkernelSpinCheck(void)
     if (!s_cur) return;
     if (++s_spinCalls < WK_SPIN_LIMIT) return;
     s_spinCalls = 0;
+    webkernelTrace("spin", 0);
     s_cur->state = WK_SPIN;
     wkSwitchOut();
 }
@@ -183,7 +204,9 @@ static void wkRunReady(void)
         t->switches++;
         s_spinCalls = 0;
         s_lastRunFrame = s_frames;
+        webkernelTrace("run", t->id);
         emscripten_fiber_swap(&s_mainFiber, &t->fiber);
+        webkernelTrace("back", (uintptr_t)t->state);
         s_cur = NULL;
 
     }
@@ -248,4 +271,37 @@ void webkernelMainLoop(void (*pump)(void), void (*retrace)(void), unsigned perio
     s_periodMs = period_us / 1000.0;
     sysLogPrintf(LOG_NOTE, "webkernel: main loop, retrace every %.3f ms", s_periodMs);
     emscripten_set_main_loop(wkFrame, 0, 0);
+}
+
+/* Guard (linked with -Wl,--wrap=emscripten_sleep): an ASYNCIFY sleep from inside a game fiber unwinds
+ * the fiber as if it were the main loop and breaks the scheduler (G2's post-logo hang came from SDL's
+ * SwapWindow doing emscripten_sleep(0)). In a fiber the sleep is refused and reported once; the
+ * browser frame boundary is the scheduler's job. Outside fibers (never used today) it passes through. */
+void __real_emscripten_sleep(unsigned int ms);
+void __wrap_emscripten_sleep(unsigned int ms)
+{
+    static int reported;
+    if (s_cur) {
+        if (!reported++)
+            sysLogPrintf(LOG_ERROR, "webkernel: emscripten_sleep(%u) from fiber %d refused (would break "
+                         "the fiber scheduler); find the caller and route it through webkernel", ms, s_cur->id);
+        webkernelTrace("emscripten_sleep refused", ms);
+        return;
+    }
+    __real_emscripten_sleep(ms);
+}
+
+/* Busy-waits on state another thread changes (linked with -Wl,--wrap=alCSPGetState).
+ * music.c musicTrack{1,2,3}Play: `while (alCSPGetState(seqp)) ;` waits for the audio thread to
+ * process the stop event the game just queued. With real threads (native, N64) the audio thread
+ * preempts the loop; with cooperative fibers the loop never gives it a turn and the page freezes
+ * (G2's hang at the intro music start, after the Rareware logo). The wrapper counts the poll like
+ * osGetCount does: after a run of polls the fiber parks until the next browser frame, the audio
+ * thread runs on the next retrace, and the loop sees AL_STOPPED. Same value, same game code. */
+struct ALCSPlayer_s;
+int __real_alCSPGetState(struct ALCSPlayer_s *seqp);
+int __wrap_alCSPGetState(struct ALCSPlayer_s *seqp)
+{
+    webkernelSpinCheck();
+    return __real_alCSPGetState(seqp);
 }
