@@ -1,0 +1,9 @@
+# goldeneye-emsdk: Emscripten toolchain for the GoldenEye web build (wasm64 C ABI lowered to wasm32,
+# see docs/web/PLAN.md). Built by scripts/web/env.sh; nothing is installed on the host.
+FROM emscripten/emsdk:4.0.15-arm64
+RUN apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y --no-install-recommends \
+      ninja-build ccache && rm -rf /var/lib/apt/lists/*
+# Pre-build the Emscripten ports the game links (SDL2, zlib) for the LP64 (MEMORY64) target, so builds
+# don't rebuild them in a throw-away container cache.
+RUN embuilder build sdl2 zlib --wasm64 && embuilder build sdl2 zlib \
+ && chmod -R a+rwX /emsdk/upstream/emscripten/cache

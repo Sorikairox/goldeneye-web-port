@@ -205,3 +205,4 @@ tools_pc/sweep-captures/**/*.ppm
 # referenced by no project tooling. Never commit.
 /Python/
 docs/media/*.mp4
+port_work/
