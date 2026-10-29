@@ -24,7 +24,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 # (GCC does hard-error on the one struct that declares a member with the same
 # name as an inherited one — CCTVRecord's `pad` — see docs/internals.md.)
 # An explicit -DCMAKE_C_COMPILER=... always wins.
-if(NOT DEFINED CMAKE_C_COMPILER)
+if(NOT DEFINED CMAKE_C_COMPILER AND NOT EMSCRIPTEN)
   find_program(_GE007_GCC NAMES gcc)
   if(_GE007_GCC)
     set(CMAKE_C_COMPILER "${_GE007_GCC}" CACHE FILEPATH "C compiler" FORCE)
@@ -85,7 +85,15 @@ set(ROMID "ntsc-final" CACHE STRING "ROM id: ntsc-final (US), pal-final (EU), jp
 # ----------------------------------------------------------------------------
 # Target arch / platform
 # ----------------------------------------------------------------------------
-target_architecture(TARGET_ARCH)
+if(EMSCRIPTEN)
+  # Web build (docs/web/PLAN.md): the C code is compiled for wasm64 (LP64, the
+  # same data model as the x86-64 builds, so every ABI/layout fix and the
+  # sidecar layouts stay valid) and lowered to wasm32 by Binaryen
+  # (-sMEMORY64=2), which also wraps every address to 32 bits.
+  set(TARGET_ARCH "wasm64")
+else()
+  target_architecture(TARGET_ARCH)
+endif()
 if(TARGET_ARCH MATCHES "64")
   set(TARGET_IS_64BIT TRUE)
 else()
@@ -93,7 +101,9 @@ else()
 endif()
 message(STATUS "Target arch: ${TARGET_ARCH} (64bit=${TARGET_IS_64BIT})")
 
-if(WIN32)
+if(EMSCRIPTEN)
+  set(TARGET_OS "web")
+elseif(WIN32)
   set(TARGET_OS "windows")
 elseif(APPLE)
   set(TARGET_OS "osx")
@@ -164,6 +174,11 @@ configure_file(
 # the toolchain include dir from the compiler location (MinGW/MSYS2 layout:
 # bin/../include) and generate an absolute-path include.
 get_filename_component(_PORT_GCC_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+if(EMSCRIPTEN)
+  # The host libc headers live in the Emscripten sysroot; pointing _PORT_GCC_DIR
+  # at <sysroot>/bin makes every "bin/../include/<hdr>" lookup below resolve there.
+  set(_PORT_GCC_DIR "${EMSCRIPTEN_SYSROOT}/bin")
+endif()
 get_filename_component(PORT_HOST_STRING_H "${_PORT_GCC_DIR}/../include/string.h" ABSOLUTE)
 configure_file(
   "${CMAKE_SOURCE_DIR}/port/include/hoststring.h.in"
@@ -287,7 +302,24 @@ add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-function>)
 # the Plan 9 extensions explicitly there (superset of -fms-extensions: also the
 # automatic base-pointer conversion the idiom relies on). C only — the decomp
 # is C; fast3d C++ does not use `inherits`.
-if(NOT MINGW)
+if(EMSCRIPTEN)
+  # Clang has no -fplan9-extensions; -fms-extensions gives the part the
+  # `inherits` idiom needs (an embedded tagged struct whose members are
+  # accessed directly). Clang also turns several IDO-era leniencies into
+  # errors by default; downgrade them like -fpermissive does for GCC 14.
+  add_compile_options($<$<COMPILE_LANGUAGE:C>:-fms-extensions>
+    -Wno-microsoft-anon-tag
+    -Wno-error=incompatible-function-pointer-types
+    -Wno-error=implicit-int
+    -Wno-error=return-type
+    -Wno-error=int-to-pointer-cast
+    -Wno-int-conversion -Wno-incompatible-pointer-types
+    -Wno-incompatible-function-pointer-types -Wno-pointer-to-int-cast
+    -Wno-int-to-pointer-cast -Wno-implicit-function-declaration
+    -Wno-unknown-pragmas -Wno-unused-function -Wno-parentheses
+    -Wno-constant-conversion -Wno-shift-count-overflow
+    -Wno-unknown-warning-option -Wno-format)
+elseif(NOT MINGW)
   add_compile_options($<$<COMPILE_LANGUAGE:C>:-fplan9-extensions>)
   # GCC 14 promoted several long-standing C leniencies to hard errors
   # (int<->pointer for a known prototype, incompatible-pointer arg types,
@@ -306,7 +338,27 @@ endif()
 # garbage. With DYNAMICBASE disabled the image loads at its preferred base
 # (0x140000000) and the relocations are no-ops. main.c sanity-checks the load
 # base at startup.
-if(MINGW)
+if(EMSCRIPTEN)
+  # Web memory map (docs/web/PLAN.md "Memory map"):
+  #   [0, 0x10000000)          unused null zone (GLOBAL_BASE)
+  #   [0x10000000, 0x20000000) cart window: ROM + sidecars, the first .rodata
+  #                            object (generated romassets_<r>_wasm.s), so every
+  #                            ROM asset label keeps its 0x10000000+offset value
+  #   [0x20000000, ...)        static data, stack, heap (kept below 2 GiB: the
+  #                            MEMORY64=2 JS glue mis-indexes higher addresses)
+  #   [0x80000000, +8 MiB)     N64 DRAM, one view (V1 == K0, see portaddr.h)
+  # Zero-initialised game globals go to .data (packed away by wasm-opt) so the
+  # game's own globals sit with the rest of the static data at 0x2xxxxxxx.
+  add_compile_options(-fno-zero-initialized-in-bss -sMEMORY64=2)
+  # The decomp's own libc routines (src/str.c strtol, src/sprintf.c sprintf)
+  # replace the host ones program-wide on native (the exe's symbol wins over
+  # the shared libc). A static wasm libc cannot be overridden like that, so in
+  # C TUs both names point at the decomp's functions, which keeps the native
+  # behaviour; C++ (fast3d) keeps the host libc.
+  add_compile_options($<$<COMPILE_LANGUAGE:C>:-Dstrtol=ge_strtol> $<$<COMPILE_LANGUAGE:C>:-Dsprintf=ge_sprintf>)
+  add_definitions(-DPORT_DRAM_V1_BASE=0x80000000UL -DGE_WEB=1)
+  add_compile_options("SHELL:-include ${CMAKE_SOURCE_DIR}/port/src/web/webdram.h")
+elseif(MINGW)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--disable-dynamicbase")
 elseif(UNIX AND NOT APPLE)
   # Linux equivalent of the ASLR-off requirement above: dram_syms.s defines
@@ -331,6 +383,16 @@ elseif(UNIX AND NOT APPLE)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-Ttext-segment=0x20000000")
 endif()
 
+if(EMSCRIPTEN)
+  # libc++ insists on finding its own <string.h>/<stddef.h>/... wrappers before
+  # any C header of the same name, and its #include_next must then reach the
+  # real C headers. GCC gets this for free (an -I dir never shadows the system
+  # headers a system header include_next's into); clang does not. So the
+  # fast3d C++ TUs see the project include dirs as -idirafter: libc++ and the
+  # libc headers win for C++, and everything else (PR/, port/shim's PR/gbi.h
+  # and bondtypes.h, game headers) is found in the same order as before.
+  set(CMAKE_INCLUDE_FLAG_CXX "-idirafter")
+endif()
 # port/shim first: PC-only shadow headers (bondtypes.h, bondconstants.h,
 # PR/gbi.h) that fix N64-compiler assumptions without touching src/ or
 # include/. Inert in the N64 build (its Makefile never sees port/shim).
@@ -352,6 +414,15 @@ include_directories(
 # ----------------------------------------------------------------------------
 set(LIBS "")
 
+if(EMSCRIPTEN)
+  # SDL2 and zlib come from Emscripten's ports (prebuilt in the goldeneye-emsdk
+  # image); GL is WebGL2 through SDL's ES3 context.
+  add_compile_options(-sUSE_SDL=2 -sUSE_ZLIB=1)
+  set(PORT_REAL_ZLIB_H "${EMSCRIPTEN_SYSROOT}/include/zlib.h")
+  configure_file(
+    "${CMAKE_SOURCE_DIR}/port/include/realzlib.h.in"
+    "${CMAKE_BINARY_DIR}/port/include/realzlib.h" @ONLY)
+else()
 find_package(SDL2 REQUIRED)
 include_directories(SYSTEM "${SDL2_INCLUDE_DIR}")
 list(APPEND LIBS "${SDL2_LIBRARY}")
@@ -401,6 +472,7 @@ if(NOT EXTRA_LIBRARIES)
   endif()
 endif()
 list(APPEND LIBS "${EXTRA_LIBRARIES}")
+endif() # NOT EMSCRIPTEN
 
 # ----------------------------------------------------------------------------
 # Sources
@@ -418,6 +490,19 @@ file(GLOB_RECURSE SRC_FAST3D    "${CMAKE_SOURCE_DIR}/port/fast3d/*.cpp"
 set(SRC_ROMASSETS "${CMAKE_SOURCE_DIR}/port/src/romassets_${ASSET_REGION}.s")
 if(NOT EXISTS ${SRC_ROMASSETS})
   message(FATAL_ERROR "Missing ${SRC_ROMASSETS} — run: python3 scripts/gen_romassets.py ${ASSET_REGION}")
+endif()
+if(EMSCRIPTEN)
+  # wasm object files have no absolute symbols: re-express the same labels as
+  # offsets inside a 256 MiB .rodata section linked first at GLOBAL_BASE
+  # 0x10000000 (scripts/web/gen_cart_wasm.py; offsets only, no ROM bytes).
+  set(_WASM_CART "${CMAKE_BINARY_DIR}/romassets_${ASSET_REGION}_wasm.s")
+  add_custom_command(OUTPUT "${_WASM_CART}"
+    COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/web/gen_cart_wasm.py" "${SRC_ROMASSETS}" "${_WASM_CART}"
+    DEPENDS "${SRC_ROMASSETS}" "${CMAKE_SOURCE_DIR}/scripts/web/gen_cart_wasm.py")
+  set(SRC_ROMASSETS "${_WASM_CART}")
+  list(FILTER SRC_PORT EXCLUDE REGEX "port/src/(crash|updatecheck)\\.c$")
+else()
+  list(FILTER SRC_PORT EXCLUDE REGEX "port/src/web/")
 endif()
 
 # Absolute symbols inside the reserved N64-DRAM region (port/src/dram.c):
@@ -462,6 +547,27 @@ file(GLOB_RECURSE SRC_GAME "${CMAKE_SOURCE_DIR}/src/game/*.c")
 list(REMOVE_ITEM SRC_GAME
   "${CMAKE_SOURCE_DIR}/src/game/decompress.c"
   "${CMAKE_SOURCE_DIR}/src/game/zlib.c")
+if(EMSCRIPTEN)
+  # Build-dir copies of the few game files clang/wasm cannot take as written
+  # (scripts/web/web_srcfix.py: a clang `#pragma weak` bug, and an absolute
+  # DRAM symbol used in a static initializer). Game sources stay untouched.
+  set(_SRCFIX_lv          "")
+  set(_SRCFIX_spectrum    "")
+  set(_SRCFIX_initanitable --abs "animations_frame_buffer=0x80000000UL+0x7FFD30")
+  set(_SRCFIX_initweaponanigroups --fn
+      "get_ptr_allocated_block_for_vertices=void get_ptr_allocated_block_for_vertices(int)")
+  foreach(_pwb lv spectrum initanitable initweaponanigroups)
+    set(_pwo "${CMAKE_BINARY_DIR}/srcfix/${_pwb}.c")
+    add_custom_command(OUTPUT "${_pwo}"
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/srcfix"
+      COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/web/web_srcfix.py"
+              "${CMAKE_SOURCE_DIR}/src/game/${_pwb}.c" "${_pwo}" ${_SRCFIX_${_pwb}}
+      DEPENDS "${CMAKE_SOURCE_DIR}/src/game/${_pwb}.c" "${CMAKE_SOURCE_DIR}/scripts/web/web_srcfix.py"
+      VERBATIM)
+    list(REMOVE_ITEM SRC_GAME "${CMAKE_SOURCE_DIR}/src/game/${_pwb}.c")
+    list(APPEND SRC_GAME "${_pwo}")
+  endforeach()
+endif()
 
 # libaudio (AL) — runs on the CPU, platform independent.
 file(GLOB SRC_LIBAUDIO "${CMAKE_SOURCE_DIR}/src/libultra/audio/*.c")
@@ -576,10 +682,61 @@ set(SRC_ENGINE
 )
 list(PREPEND SRC_ENGINE "${CMAKE_SOURCE_DIR}")
 
+if(EMSCRIPTEN)
+  set(SRC_DRAM_SYMS "")   # cfb_16 & co. come from port/src/web/webdram.h instead
+endif()
+if(EMSCRIPTEN)
+  # Call-signature adapters (scripts/web/sigadapt.py, table sigadapt.tsv): the
+  # calling TU of each mismatched call is redirected to an adapter that
+  # converts the arguments like a register ABI would; wasm would trap.
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/scripts/web/sigadapt.tsv" "${CMAKE_SOURCE_DIR}/scripts/web/sigadapt.py")
+  execute_process(COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/web/sigadapt.py" gen
+    "${CMAKE_BINARY_DIR}/sigadapt.c" "${CMAKE_BINARY_DIR}/sigadapt.cmake" RESULT_VARIABLE _sa_rc)
+  if(NOT _sa_rc EQUAL 0)
+    message(FATAL_ERROR "scripts/web/sigadapt.py gen failed")
+  endif()
+  set(GE_SIGADAPT_DEFS "")
+  include("${CMAKE_BINARY_DIR}/sigadapt.cmake")
+  set(_sa_all ${SRC_GAME} ${SRC_ENGINE} ${SRC_PORT} ${SRC_LIBAUDIO} ${SRC_LIBULTRARE_AUDIO} ${SRC_GU})
+  foreach(_e ${GE_SIGADAPT_DEFS})
+    string(REPLACE "|" ";" _e "${_e}")
+    list(GET _e 0 _caller)
+    list(GET _e 1 _defs)
+    string(REPLACE "," ";" _defs "${_defs}")
+    set(_found FALSE)
+    foreach(_f ${_sa_all})
+      get_filename_component(_fn "${_f}" NAME)
+      if(_fn STREQUAL _caller)
+        set_property(SOURCE "${_f}" APPEND PROPERTY COMPILE_DEFINITIONS ${_defs})
+        set(_found TRUE)
+      endif()
+    endforeach()
+    if(NOT _found)
+      message(WARNING "sigadapt: caller ${_caller} not in the source list")
+    endif()
+  endforeach()
+  list(APPEND SRC_PORT "${CMAKE_BINARY_DIR}/sigadapt.c")
+  # The decomp side's 64-bit port fixes (#ifdef PORT, e.g. src/audi.c,
+  # src/libultra/audio/*.c, assets/animationtable_data.h) are gated on
+  # __x86_64__, meaning "the LP64 PC port". wasm64 is LP64 with the same
+  # layout, so the game-side TUs (not the port layer, not system libraries)
+  # see that macro too.
+  set_property(SOURCE ${SRC_GAME} ${SRC_ENGINE} ${SRC_LIBAUDIO} ${SRC_LIBULTRARE_AUDIO}
+    ${SRC_GU} ${SRC_LIBULTRARE_DATA} ${SRC_LIBULTRARE_LIBC} ${SRC_ASSETS}
+    APPEND PROPERTY COMPILE_DEFINITIONS __x86_64__=1)
+  # The game's integer acos/asin (math_asinacos.c) replace libm's program-wide
+  # on native; here they keep their own names apart from libc's (SDL uses it).
+  foreach(_f ${SRC_GAME})
+    if(_f MATCHES "math_asin(acos|facosf)\\.c$")
+      set_property(SOURCE "${_f}" APPEND PROPERTY COMPILE_DEFINITIONS acos=ge_acos asin=ge_asin)
+    endif()
+  endforeach()
+endif()
 set(SRC
+  ${SRC_ROMASSETS}        # first: the web build needs the cart window at GLOBAL_BASE
   ${SRC_GAME}
   ${SRC_PORT}
-  ${SRC_ROMASSETS}
   ${SRC_DRAM_SYMS}
   ${SRC_PORT_CXX}
   ${SRC_FAST3D}
@@ -608,4 +765,20 @@ if(WIN32)
   target_sources(ge007 PRIVATE cmake/icon/ge007.rc)
 endif()
 
+if(EMSCRIPTEN)
+  # The web shell (port/web/) loads ge007.js; see scripts/web/build.sh.
+  set_target_properties(ge007 PROPERTIES OUTPUT_NAME "ge007" SUFFIX ".js")
+
+  target_link_options(ge007 PRIVATE
+    -sMEMORY64=2 -sUSE_SDL=2 -sUSE_ZLIB=1
+    -sGLOBAL_BASE=256mb -sINITIAL_MEMORY=2112mb -sALLOW_MEMORY_GROWTH=0
+    -sSTACK_SIZE=4mb
+    -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1
+    -sGL_ENABLE_GET_PROC_ADDRESS=1
+    -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=65536
+    -sEXIT_RUNTIME=0 -sINVOKE_RUN=0
+    -sEXPORTED_RUNTIME_METHODS=FS,callMain,ccall
+    -sFORCE_FILESYSTEM=1 -sENVIRONMENT=web
+    -Wl,-Map=${CMAKE_BINARY_DIR}/ge007.map)
+endif()
 message(STATUS "Output binary: ${BIN_NAME}")

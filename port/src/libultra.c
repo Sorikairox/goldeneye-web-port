@@ -57,6 +57,20 @@
 #include <windows.h> /* GetCurrentThreadId for thread-dump labels */
 #endif
 
+#if defined(GE_WEB)
+/* Web build (docs/web/PLAN.md "Threads"): one browser thread, game threads are
+ * cooperative fibers (port/src/web/webkernel.c). The mutexes below are no-ops
+ * in a single-threaded Emscripten build; the condition-variable waits are the
+ * kernel's blocking points and map onto the fiber scheduler. Every wait in
+ * this file sits in a `while (!condition)` loop, so an optimistic wake-up only
+ * re-checks the condition. */
+#include "web/webkernel.h"
+#define pthread_cond_wait(c, m)          webkernelWait()
+#define pthread_cond_timedwait(c, m, t)  (webkernelWait(), 0)
+#define pthread_cond_signal(c)           webkernelSignal()
+#define pthread_cond_broadcast(c)        webkernelSignal()
+#endif
+
 /* fast3d (C++): the software RSP entry point. */
 extern void gfx_run(Gfx *commands);
 extern void videoSyncSplitScreen(void); /* D416 */
@@ -129,6 +143,9 @@ static u32 g_determTraceSeq = 0;
 
 u32 osGetCount(void)
 {
+#if defined(GE_WEB)
+    webkernelSpinCheck();   /* frametiming.c busy-waits on the counter */
+#endif
     if (g_determEnabled) {
         return g_determTicks;
     }
@@ -356,12 +373,27 @@ void portKernelInit(void)
         }
     }
 
+#if defined(GE_WEB)
+    (void)portTickThread;   /* the browser frame drives retraces: portWebRetrace() */
+#else
     pthread_t th;
     if (pthread_create(&th, NULL, portTickThread, NULL) != 0) {
         sysFatalError("portKernelInit: pthread_create(tick) failed");
     }
     pthread_detach(th);
+#endif
 }
+
+#if defined(GE_WEB)
+/* One console retrace, called by the web main loop at the console rate: the
+ * body of portTickThread's loop without the sleeping. */
+void portWebRetrace(void)
+{
+    portPostVIEvent();
+    portServiceTimers();
+}
+unsigned portWebRetracePeriodUs(void) { return g_tickIntervalUs; }
+#endif
 
 /* ------------------------------------------------------------------------ */
 /* Threads                                                                   */
@@ -443,12 +475,34 @@ static void *portAllocLowStack(size_t sz)
 }
 #endif
 
+#if defined(GE_WEB)
+static void portWebThreadEntry(void *arg)
+{
+    PortThread *pt = (PortThread *)arg;
+    /* wasm checks indirect-call signatures: rmonMain is `void rmonMain(void)`
+     * (src/rmon.h) although osCreateThread takes `void (*)(void *)`. */
+    extern void rmonMain(void);
+    if ((void *)pt->entry == (void *)rmonMain) ((void (*)(void))pt->entry)();
+    else pt->entry(pt->arg);
+    imThreadExitRelease();
+    pt->exited = 1;
+    if (pt->os) pt->os->state = OS_STATE_STOPPED;
+}
+#endif
+
 void osStartThread(OSThread *t)
 {
     PortThread *pt = portFind(t);
     if (!pt || pt->started) return;
     pt->started = 1;
     t->state = OS_STATE_RUNNABLE;
+#if defined(GE_WEB)
+    /* The idle thread is parked, as on native (it would only spin). */
+    if (pt->id == 1 /* IDLE_THREAD_ID */) { pt->exited = 1; return; }
+    webkernelSpawn(portWebThreadEntry, pt, (const int *)&t->priority, (int)pt->id);
+    webkernelSignal();   /* a higher-priority new thread runs at once (libultra) */
+    return;
+#endif
 
     pthread_attr_t attr;
     int rc;
@@ -489,6 +543,10 @@ void osDestroyThread(OSThread *t)
 
 void osYieldThread(void)
 {
+#if defined(GE_WEB)
+    webkernelYield();
+    return;
+#endif
     /* GE rarely yields explicitly; a 1 ms sleep is a fine host equivalent
      * (sched_yield() would need MinGW's <sched.h>, which the game's own
      * src/sched.h shadows on the include path). */
@@ -1317,6 +1375,9 @@ static void *portRenderWorker(void *arg)
 
 static int portRenderWorkerOn(void)
 {
+#if defined(GE_WEB)
+    return 0;   /* one browser thread: gfx tasks run inline on the sched fiber */
+#endif
     if (s_rwMode == 0) {
         s_rwMode = -1;
         if (g_determEnabled) {

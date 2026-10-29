@@ -31,7 +31,7 @@
 #ifndef _PC_PROTOS_H_
 #define _PC_PROTOS_H_
 
-#if defined(PORT) && defined(__x86_64__) && !defined(__cplusplus)
+#if defined(PORT) && (defined(__x86_64__) || defined(__wasm64__)) && !defined(__cplusplus)
 
 #include <PR/ultratypes.h> /* u8..s32, f32, size_t (host on PC) */
 #include <PR/gbi.h>        /* Gfx, Mtx, Vtx, Light (shimmed on PC) */
@@ -481,6 +481,19 @@ Gfx* watchRenderController();
 Gfx * watchRenderControllerOpaque();
 u32 weaponLoadProjectileModels();
 void zbufSetBuffer();
+
+#if defined(__wasm64__)
+/* Web build: wasm checks call signatures, so an empty-paren declaration whose
+ * calls pass different argument types within one TU (an int 0 here, a NULL
+ * pointer there) compiles to a trap ("_bitcast_invalid"). Completing the
+ * prototype (compatible with the empty-paren one above and with the real
+ * header) makes every call convert its arguments exactly as on native.
+ * Cross-TU mismatches are handled by scripts/web/sigadapt.py. */
+void *dynAllocate(s32 size);
+void *memaAlloc(u32 size);
+void memaFree(void *addr, s32 size);
+long int strtol(const char *str, char **endptr, int base);
+#endif
 
 #endif /* PORT && __x86_64__ && !__cplusplus */
 #endif /* _PC_PROTOS_H_ */

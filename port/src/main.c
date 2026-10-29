@@ -22,6 +22,9 @@
 #include <PR/os.h>
 
 #include "platform.h"
+#if defined(GE_WEB)
+#include "web/webkernel.h"
+#endif
 #include "system.h"
 #include "config.h"
 #include "updatecheck.h"
@@ -261,6 +264,18 @@ int main(int argc, char **argv)
     osCreateThread(&mainThread, MAIN_THREAD_ID, &mainproc, NULL, NULL,
                    MAIN_THREAD_PRIORITY);
     osStartThread(&mainThread);
+
+#if defined(GE_WEB)
+    /* 5. Web: the browser owns the loop. Every animation frame pumps SDL
+     *    events, posts the due console retraces (PAL 50 Hz) and runs the game
+     *    threads (cooperative fibers) until they all block; main() returns. */
+    {
+        extern void portWebRetrace(void);
+        extern unsigned portWebRetracePeriodUs(void);
+        webkernelMainLoop(videoPumpEvents, portWebRetrace, portWebRetracePeriodUs());
+        return 0;
+    }
+#endif
 
     /* 5. Host thread: pump SDL events until the window is closed / ESC.
      *    videoPumpEvents() exits the process on quit. */

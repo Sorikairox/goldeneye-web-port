@@ -23,11 +23,15 @@
   #endif
 #elif defined(__linux__)
   #define PLATFORM_LINUX 1
+#elif defined(__EMSCRIPTEN__)
+  /* Web build (docs/web/PLAN.md): POSIX-like libc (musl) without processes,
+   * signals or OS threads. */
+  #define PLATFORM_WEB 1
 #else
   #error "Unsupported platform"
 #endif
 
-#if defined(_M_X64) || defined(__x86_64__) || defined(__aarch64__)
+#if defined(_M_X64) || defined(__x86_64__) || defined(__aarch64__) || defined(__wasm64__)
   #define PLATFORM_64BIT 1
 #endif
 

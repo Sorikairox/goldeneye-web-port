@@ -118,12 +118,19 @@ void bzero(void *s, int n)                     { memset(s, 0, (size_t)n); }
 /* --- libm internals (IDO's libm exposed these; MinGW's does not) --------- */
 /* Quiet NaN float, used by gu/cosf.c and game/zlib.c. The VALUE is the same  */
 /* qNaN on any endianness (bit pattern 0x7FC00000 read back as a float).      */
+#if defined(GE_WEB)
+/* gu/guint.h declares it as DATA (`extern float __libm_qnan_f;`, as in IDO's
+ * libm_vals.s); wasm will not link a function to a data reference, so the web
+ * build defines the qNaN value itself. */
+union { u32 i; float f; } __libm_qnan_f = { 0x7FC00000u };
+#else
 float __libm_qnan_f(void)
 {
     union { u32 i; float f; } u;
     u.i = 0x7FC00000u;
     return u.f;
 }
+#endif
 
 /* --- Remote monitor (src/rmon.c, not built for PC) ---------------------- */
 /* rmon is the N64 remote monitor (host debugger); it has no PC equivalent.  */

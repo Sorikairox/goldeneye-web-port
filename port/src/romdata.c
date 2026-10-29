@@ -369,7 +369,19 @@ int romdataInit(void)
          * romdataGetRom()/the PI shims, will read wrong memory). */
         {
             u32 maplen = romSize + sideTotal + cgTotal;
-#if defined(PLATFORM_WINDOWS)
+#if defined(GE_WEB)
+            /* Web: the cart window is a 256 MiB section the build placed at
+             * exactly CART_BASE (scripts/web/gen_cart_wasm.py); just check. */
+            extern unsigned char ge_cart_window[];
+            if ((uintptr_t)ge_cart_window != CART_BASE || maplen > 0x10000000u) {
+                sysLogPrintf(LOG_ERROR, "romdataInit: cart window at %p (want 0x%08X), "
+                             "image %u bytes (max 0x10000000)", (void *)ge_cart_window,
+                             CART_BASE, maplen);
+                free(img);
+                return -1;
+            }
+            return romdataFinishCartMap(tok, img, sideTotal, cgTotal);
+#elif defined(PLATFORM_WINDOWS)
             void *at = VirtualAlloc((LPVOID)CART_BASE, maplen,
                                     MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
             if (at == (void *)(uintptr_t)CART_BASE)

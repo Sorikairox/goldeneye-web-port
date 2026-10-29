@@ -1,0 +1,221 @@
+/*
+ * webkernel.c — cooperative libultra threads on Emscripten fibers (see webkernel.h).
+ *
+ * Model (same as the Conker web port's pc_sched.c, simplified):
+ *  - each game thread is an emscripten_fiber_t with static C + asyncify stacks
+ *    (fixed addresses: their contents end up in game memory, and fixed slots
+ *    keep two browsers' layouts identical for later lockstep work);
+ *  - the scheduler is the browser's main context; it resumes the highest
+ *    priority READY fiber until no fiber is ready, then returns to the browser;
+ *  - a blocked fiber (WAITING) becomes READY again whenever any queue changes
+ *    (webkernelSignal bumps a counter); it re-checks its own condition in
+ *    libultra.c's loop and waits again if it was not for it;
+ *  - a busy-waiting fiber (SPIN) is resumed on the next browser frame only.
+ */
+#include <stddef.h>  /* port/shim/stddef.h: size_t before the Emscripten headers */
+#include <emscripten.h>
+#include <emscripten/fiber.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "webkernel.h"
+#include "platform.h"
+#include "system.h"
+
+#define WK_MAX_THREADS 8
+#define WK_C_STACK     (1024 * 1024)
+#define WK_A_STACK     (1024 * 1024)
+#define WK_MAX_SWITCHES_PER_FRAME 20000
+#define WK_SPIN_LIMIT  64
+
+enum { WK_FREE, WK_READY, WK_RUNNING, WK_WAITING, WK_SPIN, WK_DEAD };
+
+typedef struct {
+    emscripten_fiber_t fiber;
+    void (*entry)(void *);
+    void *arg;
+    const int *prio;
+    int id;
+    int state;
+    unsigned waitSeq;      /* signal counter value when it blocked */
+    unsigned order;        /* FIFO among equal priorities */
+    unsigned switches;
+} WkThread;
+
+static WkThread s_threads[WK_MAX_THREADS];
+static char s_cstack[WK_MAX_THREADS][WK_C_STACK] __attribute__((aligned(16)));
+static char s_astack[WK_MAX_THREADS][WK_A_STACK] __attribute__((aligned(16)));
+static emscripten_fiber_t s_mainFiber;
+static char s_mainAstack[WK_A_STACK] __attribute__((aligned(16)));
+static WkThread *s_cur = NULL;
+static unsigned s_signalSeq = 1;
+static unsigned s_orderSeq = 0;
+static unsigned s_spinCalls = 0;
+static int s_inited = 0;
+
+static void (*s_pump)(void);
+static void (*s_retrace)(void);
+static double s_periodMs;
+static double s_nextRetraceMs;
+static unsigned s_frames;
+
+static void wkInit(void)
+{
+    if (s_inited) return;
+    s_inited = 1;
+    emscripten_fiber_init_from_current_context(&s_mainFiber, s_mainAstack, sizeof s_mainAstack);
+}
+
+static int wkPrio(const WkThread *t) { return t->prio ? *t->prio : 0; }
+
+static int wkRunnable(const WkThread *t)
+{
+    return t->state == WK_READY ||
+           (t->state == WK_WAITING && t->waitSeq != s_signalSeq);
+}
+
+static WkThread *wkPick(void)
+{
+    WkThread *best = NULL;
+    for (int i = 0; i < WK_MAX_THREADS; i++) {
+        WkThread *t = &s_threads[i];
+        if (!wkRunnable(t)) continue;
+        if (!best || wkPrio(t) > wkPrio(best) ||
+            (wkPrio(t) == wkPrio(best) && t->order < best->order))
+            best = t;
+    }
+    return best;
+}
+
+static void wkSwitchOut(void)
+{
+    WkThread *me = s_cur;
+    emscripten_fiber_swap(&me->fiber, &s_mainFiber);
+}
+
+static void wkFiberEntry(void *arg)
+{
+    WkThread *t = (WkThread *)arg;
+    t->entry(t->arg);
+    sysLogPrintf(LOG_NOTE, "webkernel: thread %d returned", t->id);
+    t->state = WK_DEAD;
+    wkSwitchOut();   /* never resumed */
+}
+
+void webkernelSpawn(void (*entry)(void *), void *arg, const int *prio, int id)
+{
+    wkInit();
+    for (int i = 0; i < WK_MAX_THREADS; i++) {
+        WkThread *t = &s_threads[i];
+        if (t->state != WK_FREE) continue;
+        memset(t, 0, sizeof *t);
+        t->entry = entry;
+        t->arg = arg;
+        t->prio = prio;
+        t->id = id;
+        t->state = WK_READY;
+        t->order = ++s_orderSeq;
+        emscripten_fiber_init(&t->fiber, wkFiberEntry, t, s_cstack[i], WK_C_STACK,
+                              s_astack[i], WK_A_STACK);
+        sysLogPrintf(LOG_NOTE, "webkernel: thread %d (prio %d) in slot %d", id, wkPrio(t), i);
+        return;
+    }
+    sysFatalError("webkernel: out of thread slots");
+}
+
+int webkernelInFiber(void) { return s_cur != NULL; }
+
+void webkernelWait(void)
+{
+    s_spinCalls = 0;
+    if (!s_cur) {
+        sysFatalError("webkernel: blocking wait outside a game thread");
+        return;
+    }
+    s_cur->state = WK_WAITING;
+    s_cur->waitSeq = s_signalSeq;
+    wkSwitchOut();
+}
+
+void webkernelSignal(void)
+{
+    s_spinCalls = 0;
+    s_signalSeq++;
+    if (!s_cur) return;
+    /* libultra: a send that wakes a higher-priority thread switches to it now. */
+    WkThread *n = wkPick();
+    if (n && n != s_cur && wkPrio(n) > wkPrio(s_cur)) {
+        s_cur->state = WK_READY;
+        s_cur->order = ++s_orderSeq;
+        wkSwitchOut();
+    }
+}
+
+void webkernelYield(void)
+{
+    s_spinCalls = 0;
+    if (!s_cur) return;
+    s_cur->state = WK_READY;
+    s_cur->order = ++s_orderSeq;
+    wkSwitchOut();
+}
+
+void webkernelSpinCheck(void)
+{
+    if (!s_cur) return;
+    if (++s_spinCalls < WK_SPIN_LIMIT) return;
+    s_spinCalls = 0;
+    s_cur->state = WK_SPIN;
+    wkSwitchOut();
+}
+
+static void wkRunReady(void)
+{
+    for (int n = 0; n < WK_MAX_SWITCHES_PER_FRAME; n++) {
+        WkThread *t = wkPick();
+        if (!t) return;
+        s_cur = t;
+        t->state = WK_RUNNING;
+        t->switches++;
+        s_spinCalls = 0;
+        emscripten_fiber_swap(&s_mainFiber, &t->fiber);
+        s_cur = NULL;
+    }
+    sysLogPrintf(LOG_WARNING, "webkernel: %d switches in one frame; back to the browser",
+                 WK_MAX_SWITCHES_PER_FRAME);
+}
+
+static void wkFrame(void)
+{
+    s_frames++;
+    /* Busy-waiting threads get another go this frame. */
+    for (int i = 0; i < WK_MAX_THREADS; i++)
+        if (s_threads[i].state == WK_SPIN) s_threads[i].state = WK_READY;
+
+    if (s_pump) s_pump();
+
+    /* Console retraces due by wall time (PAL 50 Hz / NTSC 60 Hz), fixed step,
+     * at most 3 per animation frame (a hidden tab or a slow frame skips the
+     * backlog instead of fast-forwarding). */
+    double now = emscripten_get_now();
+    if (s_nextRetraceMs == 0) s_nextRetraceMs = now;
+    int due = 0;
+    while (now >= s_nextRetraceMs && due < 3) {
+        s_nextRetraceMs += s_periodMs;
+        due++;
+        if (s_retrace) s_retrace();
+        wkRunReady();
+    }
+    if (now - s_nextRetraceMs > 4 * s_periodMs) s_nextRetraceMs = now + s_periodMs;
+    if (!due) wkRunReady();   /* spinning threads (frame pacing) poll the clock */
+}
+
+void webkernelMainLoop(void (*pump)(void), void (*retrace)(void), unsigned period_us)
+{
+    wkInit();
+    s_pump = pump;
+    s_retrace = retrace;
+    s_periodMs = period_us / 1000.0;
+    sysLogPrintf(LOG_NOTE, "webkernel: main loop, retrace every %.3f ms", s_periodMs);
+    emscripten_set_main_loop(wkFrame, 0, 0);
+}

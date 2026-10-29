@@ -50,7 +50,10 @@
 #include "system.h"
 #include "portaddr.h"
 
-#if defined(PLATFORM_WINDOWS)
+#if defined(GE_WEB)
+#include <string.h>
+#include <stdint.h>
+#elif defined(PLATFORM_WINDOWS)
 #include <windows.h>
 #else
 #define _GNU_SOURCE /* memfd_create — must precede all system headers */
@@ -64,7 +67,23 @@
 
 void *dramReserve(void)
 {
-#if defined(PLATFORM_WINDOWS)
+#if defined(GE_WEB)
+    /* Web build (docs/web/PLAN.md "Memory map"): wasm linear memory cannot map
+     * one backing store twice, so there is ONE view with V1 == K0 ==
+     * 0x80000000 (portaddr.h via CMake): `offset | 0x80000000` and fast3d's
+     * `w1 + K0` land on the same bytes the game's V1 pointers use. s32-held
+     * arena pointers sign-extend to 0xffffffff8xxxxxxx in C, which the
+     * MEMORY64=2 lowering wraps back to the same 32-bit address on every load
+     * and store. The memory is part of the initial wasm memory (INITIAL_MEMORY
+     * > 0x80800000); the C heap must stay below it. */
+    extern void *sbrk(intptr_t);
+    void *brk = sbrk(0);
+    if ((uintptr_t)brk >= DRAM_V1_BASE) {
+        sysFatalError("dram: heap break %p reached the DRAM arena", brk);
+    }
+    memset((void *)DRAM_V1_BASE, 0, DRAM_SIZE);
+    return (void *)DRAM_V1_BASE;
+#elif defined(PLATFORM_WINDOWS)
     /* One anonymous section, two views at fixed addresses. */
     SECURITY_ATTRIBUTES sa;
     sa.nLength = sizeof(sa);
