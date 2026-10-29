@@ -4,17 +4,25 @@ Playbook: `WEB_PORT_ORCHESTRATOR.md` (lessons from the Conker web port). This fi
 it, don't append history) and the rules specific to this repo. Session history: `docs/web/HANDOFF.md` and
 `docs/web/sessions.tsv`.
 
-## 1. Status snapshot (2026-10-29, before G1)
+## 1. Status snapshot (2026-10-29, after G1)
 
 - **Goal:** GoldenEye 007 running in a web browser (WebAssembly), from readable C, for a player who owns the
   **EU (PAL) ROM**. Later: features (each optional) and online multiplayer, as in the Conker port.
 - **Base:** this repo is a clone of `jkdansereau/goldeneye-pc-port` (MIT; a native PC port of the n64decomp/007
   decompilation, SDL2 + OpenGL 3, NTSC-U in releases, PAL/JP "convert, build and boot from source" per its
   ROADMAP D258/D487/D488). Remote `upstream` is fetch-only (push URL disabled). Our work is on branch `web`.
+- **Web port state (G1):** `docs/web/PLAN.md` (decisions: C compiled as wasm64 = LP64 like the native
+  port, lowered to wasm32 with `-sMEMORY64=2`; cart window at 0x10000000, single-view DRAM at 0x80000000;
+  libultra threads as fibers driven by rAF at 50 Hz; ROM-derived data audit and the template + fill /
+  C-emitter plan). The Emscripten build boots in headless Chrome to the **Nintendo and Rareware logos**;
+  it hangs right after the Rareware logo (G2's first task). Sidecars are still the dev Python output
+  loaded via a dev URL (never deploy this). How to build/run: `docs/web/HANDOFF.md`.
+- **EU-only:** confirmed — the PAL build, the sidecar converters and the game need only the EU ROM.
+- **Tooling:** Docker image `goldeneye-emsdk`, containers `goldeneye-dev` (build) and `goldeneye-web-serve`
+  (127.0.0.1 only); scripts in `scripts/web/`; screenshots in gitignored `port_work/`.
 - **Reference:** the decompilation itself is cloned at `~/goldeneye-ref/007` (read-only reference).
 - **ROM:** `~/roms/GoldenEye_007_Europe.z64`, read-only, SHA-1 `167c3c433dec1f1eb921736f7d53fac8cb45ee31`
-  (= the decomp's `ge007.e.sha1`). Copy it where tools expect it (e.g. `baserom.e.z64`, `data/ge007.pal-final.z64`,
-  all gitignored); never modify the original.
+  (= the decomp's `ge007.e.sha1`). Dev copy: `data/ge007.pal-final.z64` (gitignored); never modify the original.
 - **Remote / hosting:** no private GitHub remote and no Netlify site yet: both need the user's go-ahead.
 
 ## 2. Rules for this repo (ours override upstream's AGENTS.md / CLAUDE.md where they conflict)

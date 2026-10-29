@@ -459,6 +459,13 @@ flash, controller pak).
 23. URL test flags changing hashed state (keep test flags out of recordings and sessions).
 24. Committing ROM-derived files (screenshots, extracted audio, fonts) — keep them in a gitignored work folder.
 25. Deploying a build that skipped its browser test.
+26. Starting from an existing **64-bit** PC port and targeting wasm32: its layout fixes and converters assume
+    LP64. Compile as wasm64 and lower with `-sMEMORY64=2` (runs on any engine, wraps addresses to 32 bits);
+    keep everything JS touches below 2 GiB (that glue mis-indexes higher addresses). (GoldenEye G1)
+27. wasm has no absolute symbols (no `.set sym, CONST`, no `--defsym`): place labels in a section linked first
+    at `GLOBAL_BASE`, or turn the name into a dereferenced pointer macro. (GoldenEye G1)
+28. Trusting a headless screenshot as proof the page runs: the compositor keeps serving the last frame while
+    the main thread is stuck; also check that `Runtime.evaluate` answers. (GoldenEye G1)
 
 ---
 

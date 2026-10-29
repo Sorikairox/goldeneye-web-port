@@ -1,0 +1,2 @@
+session	date	what	result
+G1	2026-10-29	PLAN.md (PC-port anatomy, wasm64->wasm32 MEMORY64=2 ABI, memory map, fibers, asset audit + in-browser plan); goldeneye-emsdk image + scripts (build/serve/probe); EU sidecars from the EU ROM alone; Emscripten build of the PC port (cart window, single-view DRAM, fiber kernel, clang/wasm fixes, 27 call adapters)	boots in headless Chrome to the 3D Nintendo and Rareware logos (port_work/g1/); main thread hangs ~17 s in, right after the Rareware logo (open for G2)
