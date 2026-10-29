@@ -236,6 +236,25 @@ static void wkStallCheck(void)
     }
 }
 
+/* Pacing report every 10 s of wall time: console retraces posted (should be 50/s PAL), browser
+ * frames, game frames rendered, retraces dropped by the catch-up cap. Cheap; always on. */
+static unsigned s_retraces, s_rendered, s_dropped;
+static double s_statT0;
+static unsigned s_statRetr, s_statFrames, s_statRend, s_statDrop;
+void webkernelFrameRendered(void) { s_rendered++; }
+
+static void wkPacingReport(double now)
+{
+    if (s_statT0 == 0) { s_statT0 = now; return; }
+    double dt = (now - s_statT0) / 1000.0;
+    if (dt < 10.0) return;
+    sysLogPrintf(LOG_NOTE, "pacing: %.1f s: retraces %.2f/s, browser frames %.1f/s, game frames %.2f/s, "
+                 "dropped retraces %u", dt, (s_retraces - s_statRetr) / dt, (s_frames - s_statFrames) / dt,
+                 (s_rendered - s_statRend) / dt, s_dropped - s_statDrop);
+    s_statT0 = now; s_statRetr = s_retraces; s_statFrames = s_frames; s_statRend = s_rendered;
+    s_statDrop = s_dropped;
+}
+
 static void wkFrame(void)
 {
     s_frames++;
@@ -255,10 +274,15 @@ static void wkFrame(void)
     while (now >= s_nextRetraceMs && due < 3) {
         s_nextRetraceMs += s_periodMs;
         due++;
+        s_retraces++;
         if (s_retrace) s_retrace();
         wkRunReady();
     }
-    if (now - s_nextRetraceMs > 4 * s_periodMs) s_nextRetraceMs = now + s_periodMs;
+    if (now - s_nextRetraceMs > 4 * s_periodMs) {
+        s_dropped += (unsigned)((now - s_nextRetraceMs) / s_periodMs);
+        s_nextRetraceMs = now + s_periodMs;
+    }
+    wkPacingReport(now);
     if (!due) wkRunReady();   /* spinning threads (frame pacing) poll the clock */
     wkStallCheck();
 }

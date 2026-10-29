@@ -88,9 +88,10 @@ async function start(rom) {
     print: (s) => log(s),
     printErr: (s) => log(s),
     noInitialRun: true,
-    // dev/test: ?env=NAME=VALUE,NAME2=VALUE2 sets C environment variables (getenv) before main()
+    // dev/test: &env=NAME=VALUE (repeatable) sets a C environment variable (getenv) before main(),
+    // e.g. &env=GE_WKTRACE=900 or &env=GE_INPUTSCRIPT=120:START;180:A (port/src/input.c)
     preRun: [() => {
-      for (const kv of (params.get('env') || '').split(',').filter(Boolean)) {
+      for (const kv of params.getAll('env')) {
         const i = kv.indexOf('='); Module.ENV[i < 0 ? kv : kv.slice(0, i)] = i < 0 ? '1' : kv.slice(i + 1);
       }
     }],

@@ -49,6 +49,15 @@ if (process.env.PROBE_PROFILE) { await call('Profiler.enable'); await call('Prof
 tNav = Date.now(); await call('Page.navigate', { url });
 if (process.env.PROBE_PROFILE) setTimeout(() => call('Profiler.start'), +process.env.PROBE_PROFILE * 1000);
 const t0 = Date.now();
+// PROBE_KEYS="62:KeyW:3,70:Space:0.2": real keyboard events (CDP Input) at <s since navigation>,
+// held for <s> -- checks the page's own SDL keyboard path (not the scripted pad)
+for (const ent of (process.env.PROBE_KEYS || '').split(',').filter(Boolean)) {
+  const [t, code, dur] = ent.split(':');
+  const key = code.startsWith('Key') ? code.slice(3).toLowerCase() : code === 'Space' ? ' ' : code;
+  const vk = code.startsWith('Key') ? code.charCodeAt(3) : code === 'Space' ? 32 : code === 'Enter' ? 13 : 0;
+  const ev = (type) => call('Input.dispatchKeyEvent', { type, code, key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+  setTimeout(() => { ev('keyDown'); setTimeout(() => ev('keyUp'), +dur * 1000); }, +t * 1000);
+}
 let stacked = false, paused = null;
 ws.addEventListener('message', (m) => { const d = JSON.parse(m.data); if (d.method === 'Debugger.paused') paused = d.params; });
 const stack = async () => {
@@ -59,14 +68,21 @@ const stack = async () => {
   console.log('probe: main thread stack:\n' + paused.callFrames.slice(0, 25).map((f) => '  at ' + (f.functionName || '?')).join('\n'));
   call('Debugger.resume');
 };
+// screenshots are clipped to the game canvas (PROBE_FULL=1: whole page), scaled by PROBE_SCALE (default 0.5)
+let clip = null; const sheet = [];
 const shot = async (tag) => {
-  const r = await Promise.race([call('Page.captureScreenshot', { format: 'png' }), sleep(10000).then(() => null)]);
+  if (!clip && !process.env.PROBE_FULL) {
+    const q = await Promise.race([call('Runtime.evaluate', { expression: 'JSON.stringify(document.getElementById("canvas")?.getBoundingClientRect())', returnByValue: true }), sleep(3000).then(() => null)]);
+    try { const b = JSON.parse(q.result.result.value); if (b.width > 0) clip = { x: b.x, y: b.y, width: b.width, height: b.height, scale: +(process.env.PROBE_SCALE || 0.5) }; } catch (e) {}
+  }
+  const r = await Promise.race([call('Page.captureScreenshot', clip ? { format: 'png', clip } : { format: 'png' }), sleep(10000).then(() => null)]);
   if (!r?.result?.data) {
     console.log(`probe: screenshot ${tag} failed (page busy?)`);
     if (!stacked) { stacked = true; await stack(); }      // where is the main thread stuck?
     return;
   }
   const f = path.join(outdir, `shot-${tag}.png`); fs.writeFileSync(f, Buffer.from(r.result.data, 'base64')); console.log('probe: screenshot ' + f);
+  sheet.push([tag, r.result.data]);
 };
 for (let t = +every; t < +secs; t += +every) { await sleep(Math.max(1, t * 1000 - (Date.now() - t0))); await shot(`${t}s`); }
 await sleep(Math.max(0, +secs * 1000 - (Date.now() - t0))); await shot(`${secs}s`);
@@ -82,7 +98,7 @@ if (process.env.PROBE_PROFILE) {
 }
 // is the page's main thread still answering? (a wasm busy loop blocks it)
 {
-  const r = await Promise.race([call('Runtime.evaluate', { expression: process.env.PROBE_EVAL || 'performance.now()', returnByValue: true }), sleep(5000).then(() => null)]);
+  const r = await Promise.race([call('Runtime.evaluate', { expression: process.env.PROBE_EVAL || 'performance.now()', returnByValue: true, awaitPromise: true }), sleep(5000).then(() => null)]);
   console.log('probe: main thread ' + (r ? 'answers: ' + JSON.stringify(r.result?.result?.value) : 'does NOT answer (busy)'));
   if (!r && !stacked) { stacked = true; await stack(); }
 }
@@ -90,4 +106,17 @@ if (process.env.PROBE_PROFILE) {
 const out = []; for (const l of lines) { if (out.length && out[out.length - 1].l === l) out[out.length - 1].n++; else out.push({ l, n: 1 }); }
 console.log(`probe: ${lines.length} console lines (full: ${path.join(outdir, 'console.log')}); last:`);
 for (const { l, n } of out.slice(-120)) console.log((n > 1 ? `(${n}x) ` : '') + l.slice(0, 400));
+// contact sheet of every screenshot (<outdir>/sheet.png), drawn by the same Chrome after the run
+if (sheet.length > 1 && !process.env.PROBE_NOSHEET) {
+  const cells = sheet.map(([t, d]) => `<div><img src="data:image/png;base64,${d}"><br>${t}</div>`).join('');
+  const html = `<style>body{margin:0;background:#222;color:#fff;font:12px sans-serif;display:flex;flex-wrap:wrap}div{margin:2px;text-align:center}img{width:240px}</style>${cells}`;
+  await call('Page.navigate', { url: 'about:blank' }); await sleep(500);
+  await call('Runtime.evaluate', { expression: `document.open();document.write(${JSON.stringify(html)});document.close();` });
+  await sleep(1000);
+  const cols = 6, rows = Math.ceil(sheet.length / cols);
+  await call('Emulation.setDeviceMetricsOverride', { width: cols * 244 + 4, height: rows * 200 + 10, deviceScaleFactor: 1, mobile: false });
+  await sleep(500);
+  const r = await Promise.race([call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }), sleep(10000).then(() => null)]);
+  if (r?.result?.data) { fs.writeFileSync(path.join(outdir, 'sheet.png'), Buffer.from(r.result.data, 'base64')); console.log('probe: contact sheet ' + path.join(outdir, 'sheet.png')); }
+}
 done(0);

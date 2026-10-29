@@ -46,6 +46,9 @@ int webkernelInFiber(void);
  * (period_us, catch-up capped), then run the ready fibers until all block. */
 void webkernelMainLoop(void (*pump)(void), void (*retrace)(void), unsigned period_us);
 
+/* libultra.c: a gfx task finished (pacing report). */
+void webkernelFrameRendered(void);
+
 /* Debug trace point: logged from frame GE_WKTRACE on, always kept in a ring. */
 void webkernelTrace(const char *tag, uintptr_t arg);
 

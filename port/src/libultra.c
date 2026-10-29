@@ -1340,6 +1340,7 @@ static void portRenderGfxTask(Gfx *dl)
     videoEndFrame();
 #if defined(GE_WEB)
     webkernelTrace("gfx end", 0);
+    webkernelFrameRendered();
 #endif
     g_lastFrameUs = sysGetMicroseconds();
     if (++g_framesRendered <= 5 || (g_framesRendered % 300) == 0)
