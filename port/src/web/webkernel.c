@@ -245,7 +245,11 @@ void webkernelFrameRendered(void) { s_rendered++; }
 
 static void wkPacingReport(double now)
 {
-    if (s_statT0 == 0) { s_statT0 = now; return; }
+    if (s_statT0 == 0) {   /* first call, or after a resume: open a new window */
+        s_statT0 = now; s_statRetr = s_retraces; s_statFrames = s_frames; s_statRend = s_rendered;
+        s_statDrop = s_dropped;
+        return;
+    }
     double dt = (now - s_statT0) / 1000.0;
     if (dt < 10.0) return;
     sysLogPrintf(LOG_NOTE, "pacing: %.1f s: retraces %.2f/s, browser frames %.1f/s, game frames %.2f/s, "
@@ -285,6 +289,39 @@ static void wkFrame(void)
     wkPacingReport(now);
     if (!due) wkRunReady();   /* spinning threads (frame pacing) poll the clock */
     wkStallCheck();
+}
+
+/* Hidden-tab pause (webpage.c). Browsers stop requestAnimationFrame for a hidden tab anyway; pausing
+ * explicitly also stops the console clock: the paused span is subtracted from sysGetMicroseconds()
+ * (osGetCount, osGetTime, timers), so after resume the game continues from the frame it was on instead
+ * of seeing one huge frame delta, and the retrace schedule restarts from "now" (no backlog). */
+static int s_paused;
+static double s_pauseStartMs;
+static uint64_t s_pausedTotalUs;
+int webkernelPaused(void) { return s_paused; }
+uint64_t webkernelPausedUs(void)
+{
+    uint64_t us = s_pausedTotalUs;
+    if (s_paused) us += (uint64_t)((emscripten_get_now() - s_pauseStartMs) * 1000.0);
+    return us;
+}
+void webkernelSetPaused(int paused)
+{
+    if (!!paused == s_paused) return;
+    double now = emscripten_get_now();
+    if (paused) {
+        s_pauseStartMs = now;
+        s_paused = 1;
+        emscripten_pause_main_loop();
+    } else {
+        s_pausedTotalUs += (uint64_t)((now - s_pauseStartMs) * 1000.0);
+        s_paused = 0;
+        s_nextRetraceMs = 0;     /* restart the retrace schedule from now */
+        s_statT0 = 0;            /* pacing report: new 10 s window */
+        emscripten_resume_main_loop();
+    }
+    sysLogPrintf(LOG_NOTE, "webkernel: %s (paused total %.1f s)", paused ? "paused" : "resumed",
+                 s_pausedTotalUs / 1e6);
 }
 
 void webkernelMainLoop(void (*pump)(void), void (*retrace)(void), unsigned period_us)

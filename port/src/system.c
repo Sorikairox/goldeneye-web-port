@@ -51,6 +51,13 @@ uint64_t sysGetMicroseconds(void)
 #else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
+#if defined(GE_WEB)
+    /* web: time spent with the tab hidden (paused) does not exist for the game */
+    {
+        extern uint64_t webkernelPausedUs(void);
+        return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)(ts.tv_nsec / 1000) - webkernelPausedUs();
+    }
+#endif
     return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)(ts.tv_nsec / 1000);
 #endif
 }

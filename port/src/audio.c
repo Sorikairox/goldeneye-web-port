@@ -185,6 +185,12 @@ int audioInit(void)
     return 0;
 }
 
+/* Pause / resume the output device (web: hidden tab). The queued audio stays queued. */
+void audioSetPaused(int paused)
+{
+    if (dev) SDL_PauseAudioDevice(dev, paused ? 1 : 0);
+}
+
 void audioDestroy(void)
 {
     if (dev) { SDL_CloseAudioDevice(dev); dev = 0; }

@@ -46,6 +46,12 @@ int webkernelInFiber(void);
  * (period_us, catch-up capped), then run the ready fibers until all block. */
 void webkernelMainLoop(void (*pump)(void), void (*retrace)(void), unsigned period_us);
 
+/* Hidden-tab pause: stop the main loop and the console clock (webpage.c). */
+void webkernelSetPaused(int paused);
+int webkernelPaused(void);
+/* Microseconds spent paused so far (sysGetMicroseconds subtracts it). */
+uint64_t webkernelPausedUs(void);
+
 /* libultra.c: a gfx task finished (pacing report). */
 void webkernelFrameRendered(void);
 
