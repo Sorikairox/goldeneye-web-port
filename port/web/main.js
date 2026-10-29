@@ -112,6 +112,21 @@ async function convertSidecars(M, romp, romlen) {
   return out;
 }
 
+// dev (?fillcheck): SHA-256 over every symbol extent listed in ge007.romfill, right after the fill and
+// before main(); scripts/web/fillcheck.py computes the same over the original (unstripped) binary.
+async function fillCheck(M, t) {
+  const dv = new DataView(t.buffer, t.byteOffset, t.byteLength), nsyms = dv.getUint32(20, true);
+  const parts = [];
+  for (let i = 0; i < nsyms; i++) {
+    const a = dv.getUint32(24 + 8 * i, true), n = dv.getUint32(28 + 8 * i, true);
+    parts.push(M.HEAPU8.slice(a, a + n));
+  }
+  const all = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
+  let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
+  const h = [...new Uint8Array(await crypto.subtle.digest('SHA-256', all))].map((x) => x.toString(16).padStart(2, '0')).join('');
+  log(`[page] fillcheck: ${nsyms} symbols, ${all.length} bytes, sha256 ${h}`);
+}
+
 // --- start the game ------------------------------------------------------------------------------
 let started = false;
 async function start(rom, romsum) {
@@ -149,6 +164,7 @@ async function start(rom, romsum) {
           const rc = M._ge_web_romfill(romp, rom.length, tp, t.length);
           M._ge_web_free(tp);
           if (rc !== 0) throw new Error('could not rebuild the game data from this ROM (romfill ' + rc + ')');
+          if (params.has('fillcheck')) await fillCheck(M, t);   // dev: independent hash of the filled symbols
         } else log('[page] no ge007.romfill: unstripped dev build');
         let side = dev;
         const key = `sidecars-v${M._ge_web_geconv_version()}-${romsum}`;

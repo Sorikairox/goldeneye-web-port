@@ -258,6 +258,215 @@ typedef struct { uint32_t dst, len, rom_off, src_off; uint8_t kind, order; } Fil
 static Fill *fills;
 static long nfills, capfills;
 
+/* ---------------------------------------------------------------- pass 2 ---
+ * Short pieces (< MINRUN) between pointers and padding: vertices (12 bytes 16-bit swapped + 4 bytes
+ * as is), display-list words (the PC Gfx keeps each N64 word in the low half of a u64), mixed
+ * u8/s16/f32 struct fields. Walking each symbol in address order, the last fill (pass 1 or 2) of
+ * the same object gives an anchor (stream, offset delta); the next unfilled non-zero, non-pointer
+ * byte is looked up near anchor + delta in the anchor's stream, in all three byte orders, and the
+ * longest match wins (ties: nearest). The anchor then moves to that match, so pieces follow the
+ * N64 layout locally even where the PC layout is wider. Acceptance: >= 4 bytes within the window,
+ * 2-3 bytes within 16 of the prediction, 1 byte only exactly at it; once per symbol, when nothing
+ * is found locally, a 64 KiB window re-anchors on a piece of 6+ bytes. Every accepted piece is exact
+ * by construction (the bytes are equal); the self-check below proves the whole table. */
+static uint8_t *ptrmask;
+static uint8_t *fillmask;
+
+static void mark_pointers(void)
+{
+    long imn = (long)(img_hi - img_lo);
+    ptrmask = calloc(imn, 1);
+    for (long i = (long)((8 - (img_lo & 7)) & 7); i + 8 <= imn; i += 8) {
+        uint64_t v = 0;
+        for (int k = 7; k >= 0; k--) v = v << 8 | img[i + k];
+        if ((v >= 0x10000000ull && v < 0x30000000ull) || (v >= 0x80000000ull && v < 0x80800000ull))
+            memset(ptrmask + i, 1, 8);
+    }
+}
+
+static int sib(int base, int order, int nbase)
+{
+    return order == 0 ? base : nbase + 2 * base + (order - 1);
+}
+
+static int g_nbase;
+static void add_fill(uint8_t *tmpl, long imgoff, long len, int seg, long src)
+{
+    if (nfills == capfills) { capfills = capfills ? capfills * 2 : 4096; fills = realloc(fills, capfills * sizeof(Fill)); }
+    Seg *g = &segs[seg];
+    fills[nfills++] = (Fill){ (uint32_t)(img_lo + imgoff), (uint32_t)len, g->rom_off, (uint32_t)src,
+                              (uint8_t)g->kind, (uint8_t)g->order };
+    memset(tmpl + imgoff, 0, len);
+    memset(fillmask + imgoff, 1, len);
+}
+
+static int base_of(int seg) { return seg < g_nbase ? seg : (seg - g_nbase) / 2; }
+
+/* Display lists: the PC Gfx is { u64 w0; u64 w1 } holding the N64 words in the low halves, so a
+ * DL never forms a contiguous run. For every symbol that looks like a Gfx array (16-byte slots whose
+ * high halves are all zero) the N64 image is rebuilt (w0, w1 per 8 bytes) and matched like pass 1;
+ * each matched word is filled from the 32-bit-swapped stream. */
+static long pass_gfx(uint8_t *tmpl, long minrun)
+{
+    long total = 0;
+    for (int si = 0; si < nsyms; si++) {
+        Sym *sy = &syms[si];
+        long fo = mem2img(sy->addr, sy->size);
+        if (fo < 0 || sy->size < 32 || sy->size % 16 || ((img_lo + fo) & 7)) continue;
+        const uint8_t *q = img + fo;
+        int gfx = 1;
+        for (long k = 0; k < sy->size && gfx; k += 16)
+            for (int b = 4; b < 8; b++) if (q[k + b] || q[k + 8 + b]) { gfx = 0; break; }
+        if (!gfx) continue;
+        long n = sy->size / 2;
+        uint8_t *c = malloc(n);
+        for (long k = 0; k < sy->size / 16; k++) { memcpy(c + 8 * k, q + 16 * k, 4); memcpy(c + 8 * k + 4, q + 16 * k + 8, 4); }
+        long o = 0;
+        uint64_t h = n >= BLK ? hblock(c) : 0;
+        while (o + BLK <= n) {
+            uint64_t i = (h * 0x9E3779B97F4A7C15ULL) & tabmask;
+            long best_len = 0, best_s = 0, best_so = 0;
+            int best_seg = -1, tries = 0;
+            for (; tab[i].seg >= 0 && tries < 256; i = (i + 1) & tabmask) {
+                if (tab[i].h != h) continue;
+                tries++;
+                Seg *g = &segs[tab[i].seg];
+                long so = tab[i].off;
+                if (g->order != 1 || memcmp(g->p + so, c + o, BLK)) continue;
+                long e = BLK;
+                while (o + e < n && so + e < g->n && c[o + e] == g->p[so + e]) e++;
+                /* whole 8-byte commands only, so the word split below stays aligned */
+                long so0 = so - (o & 7), o0 = o - (o & 7);
+                if (so0 < 0) continue;
+                long b = o & 7;
+                for (long k = 0; k < b; k++) if (c[o0 + k] != g->p[so0 + k]) { b = -1; break; }
+                if (b < 0) continue;
+                long len = (o + e - o0) & ~7L;
+                if (len > best_len) { best_len = len; best_s = o0; best_so = so0; best_seg = tab[i].seg; }
+            }
+            if (best_seg >= 0 && best_len >= minrun) {
+                for (long w = 0; w < best_len; w += 4) {
+                    long cw = best_s + w;
+                    long pc = fo + (cw / 8) * 16 + ((cw & 4) ? 8 : 0);
+                    int nz = 0, free_ = 1;
+                    for (int k = 0; k < 4; k++) { nz |= img[pc + k]; free_ &= !fillmask[pc + k] && !ptrmask[pc + k]; }
+                    if (!nz || !free_) continue;
+                    add_fill(tmpl, pc, 4, best_seg, best_so + w);
+                    total += 4;
+                }
+                o = best_s + best_len;
+                if (o + BLK > n) break;
+                h = hblock(c + o);
+                continue;
+            }
+            if (o + BLK >= n) break;
+            h = h * HB + (uint64_t)(c[o + BLK] + 1) - (uint64_t)(c[o] + 1) * HBK;
+            o++;
+        }
+        free(c);
+    }
+    return total;
+}
+
+static long pass2(uint8_t *tmpl, long minrun)
+{
+    const long W = 1024, WW = 65536;
+    long imn = (long)(img_hi - img_lo), total = 0;
+    fillmask = calloc(imn, 1);
+    for (long i = 0; i < nfills; i++) memset(fillmask + (fills[i].dst - img_lo), 1, fills[i].len);
+    total += pass_gfx(tmpl, minrun);
+    /* pass-1 fills by image offset: the anchor is updated when the walk passes one */
+    long *anchor_at = malloc(imn * sizeof(long));   /* fill index covering the byte, or -1 */
+    for (long i = 0; i < imn; i++) anchor_at[i] = -1;
+    for (long i = 0; i < nfills; i++) for (uint32_t k = 0; k < fills[i].len; k++) anchor_at[fills[i].dst - img_lo + k] = i;
+    char curobj[160] = "";
+    int abase = -1;
+    long adelta = 0;   /* src offset - image offset */
+    for (int si = 0; si < nsyms; si++) {
+        Sym *sy = &syms[si];
+        long fo = mem2img(sy->addr, sy->size);
+        if (fo < 0 || sy->size <= 0) continue;
+        const char *c = strstr(sy->name, ":(");
+        size_t ol = c ? (size_t)(c - sy->name) : strlen(sy->name);
+        if (ol >= sizeof curobj || strncmp(curobj, sy->name, ol) || curobj[ol]) {
+            memcpy(curobj, sy->name, ol < sizeof curobj ? ol : sizeof curobj - 1);
+            curobj[ol < sizeof curobj ? ol : sizeof curobj - 1] = 0;
+            abase = -1;
+            /* first anchor of a new object: its first pass-1 fill */
+            for (int sj = si; sj < nsyms && abase < 0; sj++) {
+                if (strncmp(syms[sj].name, curobj, ol)) break;
+                long fj = mem2img(syms[sj].addr, syms[sj].size);
+                if (fj < 0) continue;
+                for (long k = fj; k < fj + syms[sj].size; k++)
+                    if (anchor_at[k] >= 0) {
+                        Fill *f = &fills[anchor_at[k]];
+                        for (int q = 0; q < nsegs; q++)
+                            if (segs[q].rom_off == f->rom_off && segs[q].kind == f->kind && segs[q].order == 0) { abase = q; break; }
+                        adelta = (long)f->src_off - (long)(f->dst - img_lo);
+                        break;
+                    }
+            }
+        }
+        if (abase < 0) {   /* object without any fill yet: anchor on an 8-byte block found anywhere */
+            for (long k = fo; k + BLK <= fo + sy->size && abase < 0; k++) {
+                int nzc = 0, clean = 1;
+                for (int b = 0; b < BLK; b++) { nzc += img[k + b] != 0; clean &= !ptrmask[k + b] && !fillmask[k + b]; }
+                if (nzc < 4 || !clean) continue;
+                uint64_t h = hblock(img + k);
+                for (uint64_t i = (h * 0x9E3779B97F4A7C15ULL) & tabmask; tab[i].seg >= 0; i = (i + 1) & tabmask) {
+                    if (tab[i].h != h || memcmp(segs[tab[i].seg].p + tab[i].off, img + k, BLK)) continue;
+                    abase = base_of(tab[i].seg);
+                    adelta = (long)tab[i].off - k;
+                    break;
+                }
+            }
+        }
+        long end = fo + sy->size;
+        int wide = 0;
+        for (long p = fo; p < end;) {
+            if (anchor_at[p] >= 0) {   /* passing a pass-1 fill: re-anchor */
+                Fill *f = &fills[anchor_at[p]];
+                for (int q = 0; q < nsegs; q++)
+                    if (segs[q].rom_off == f->rom_off && segs[q].kind == f->kind && segs[q].order == 0) { abase = q; break; }
+                adelta = (long)f->src_off - (long)(f->dst - img_lo);
+                p = (long)(f->dst - img_lo) + f->len;
+                continue;
+            }
+            if (fillmask[p] || !img[p] || ptrmask[p] || abase < 0) { p++; continue; }
+            long pred = p + adelta, best_len = 0, best_src = 0, best_dist = 0;
+            int best_seg = -1;
+            /* once per symbol, when the local window finds nothing: a wide re-anchor (6+ bytes) */
+            long win = W;
+            if (wide == 1) win = WW;
+            for (int o = 0; o < 3; o++) {
+                int sg = sib(abase, o, g_nbase);
+                Seg *g = &segs[sg];
+                long lo = pred - win < 0 ? 0 : pred - win, hi = pred + win > g->n ? g->n : pred + win;
+                for (long sp = lo; sp < hi; sp++) {
+                    if (g->p[sp] != img[p]) continue;
+                    long L = 0;
+                    while (p + L < end && sp + L < g->n && !fillmask[p + L] && !ptrmask[p + L] && g->p[sp + L] == img[p + L]) L++;
+                    long d = sp > pred ? sp - pred : pred - sp;
+                    if (L > best_len || (L == best_len && d < best_dist)) { best_len = L; best_src = sp; best_dist = d; best_seg = sg; }
+                }
+            }
+            /* trailing zero bytes add nothing; keep the piece ending on a non-zero byte */
+            while (best_len > 0 && !img[p + best_len - 1]) best_len--;
+            int ok = best_seg >= 0 && ((best_len >= 4) || (best_len >= 2 && best_dist <= 16) || (best_len == 1 && best_dist == 0));
+            if (wide == 1) { ok = best_seg >= 0 && best_len >= 6; wide = 2; }
+            else if (!ok && !wide && best_len < 6) { wide = 1; continue; }   /* retry this byte wide */
+            if (!ok) { p++; continue; }
+            add_fill(tmpl, p, best_len, best_seg, best_src);
+            total += best_len;
+            abase = base_of(best_seg);
+            adelta = best_src - p;
+            p += best_len;
+        }
+    }
+    free(anchor_at);
+    return total;
+}
+
 static void put32(FILE *f, uint32_t v) { uint8_t b[4] = { v, v >> 8, v >> 16, v >> 24 }; fwrite(b, 1, 4, f); }
 
 int main(int argc, char **argv)
@@ -302,12 +511,11 @@ int main(int argc, char **argv)
     HBK = 1;
     for (int i = 0; i < BLK; i++) HBK *= HB;
 
+    g_nbase = nbase;
+    mark_pointers();
     long imn = (long)(img_hi - img_lo);
     uint8_t *tmpl = malloc(imn);
     memcpy(tmpl, img, imn);
-    FILE *rep = fopen(argv[a + 5], "w");
-    if (!rep) { fprintf(stderr, "romfill: cannot write %s\n", argv[a + 5]); return 2; }
-    fprintf(rep, "symbol\taddr\tsize\tnonzero\tfilled\n");
     long tot_nz = 0, tot_fill = 0, nsel = 0;
     for (int si = 0; si < nsyms; si++) {
         Sym *s = &syms[si];
@@ -356,9 +564,35 @@ int main(int argc, char **argv)
         }
         tot_nz += nz;
         tot_fill += filled;
-        fprintf(rep, "%s\t%#llx\t%ld\t%ld\t%ld\n", s->name, (unsigned long long)s->addr, n, nz, filled);
+    }
+    long npass1 = nfills, fill1 = tot_fill;
+    long fill2 = pass2(tmpl, minrun);
+    tot_fill += fill2;
+
+    FILE *rep = fopen(argv[a + 5], "w");
+    if (!rep) { fprintf(stderr, "romfill: cannot write %s\n", argv[a + 5]); return 2; }
+    fprintf(rep, "symbol\taddr\tsize\tnonzero\tfilled\tpointers\tresidual\n");
+    long tot_ptr = 0, tot_res = 0;
+    for (int si = 0; si < nsyms; si++) {
+        Sym *sy = &syms[si];
+        long fo = mem2img(sy->addr, sy->size);
+        if (fo < 0 || sy->size <= 0) continue;
+        long nz = 0, fl = 0, pt = 0, res = 0;
+        for (long i = fo; i < fo + sy->size; i++) {
+            if (!img[i]) continue;
+            nz++;
+            if (!tmpl[i]) fl++;
+            else if (ptrmask[i]) pt++;
+            else res++;
+        }
+        tot_ptr += pt;
+        tot_res += res;
+        fprintf(rep, "%s\t%#llx\t%ld\t%ld\t%ld\t%ld\t%ld\n", sy->name, (unsigned long long)sy->addr, sy->size, nz, fl, pt, res);
     }
     fclose(rep);
+    printf("romfill: pass 1 (runs >= %ld) %ld entries / %ld bytes, pass 2 (anchored pieces) %ld entries / %ld bytes; "
+           "left: %ld pointer-like bytes, %ld other non-zero bytes\n", minrun, npass1, fill1, nfills - npass1, fill2,
+           tot_ptr, tot_res);
 
     /* self-check: apply the table to the template, compare with the original */
     uint8_t *sim = malloc(imn);
