@@ -3,7 +3,7 @@
 // Prints the page console (deduplicated tail), wasm traps / exceptions, and saves PNG screenshots
 // <outdir>/shot-<t>s.png every shotEvery seconds and at the end. Screenshots are game imagery: keep
 // them in the gitignored port_work/.
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 const [url, secs = '20', outdir = 'port_work/shots', every = '5'] = process.argv.slice(2);
 if (!url) { console.error('usage: probe.mjs URL [seconds] [outdir] [shotEvery]'); process.exit(2); }
@@ -12,15 +12,26 @@ fs.mkdirSync(outdir, { recursive: true });
 // ONE probe Chrome at a time across all sessions/worktrees: /tmp/goldeneye-chrome.lock holds the PID of the
 // probe that owns the running Chrome. Wait while a live process holds it; a dead PID is a stale lock.
 const LOCK = '/tmp/goldeneye-chrome.lock';
+// a wrapper that already holds the lock for us (e.g. a lockrun script around route_dam.sh) is an
+// ancestor of this process: then run without taking it (else the probe would wait on its own parent)
+const ancestors = new Set(); {
+  let pid = process.ppid;
+  for (let i = 0; i < 32 && pid > 1; i++) {
+    ancestors.add(pid);
+    try { pid = +execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)]).toString().trim(); } catch (e) { break; }
+  }
+}
+let ownLock = true;
 for (let waited = 0; ; waited++) {
   try { fs.writeFileSync(LOCK, String(process.pid), { flag: 'wx' }); break; } catch (e) {}
   let holder = 0; try { holder = +fs.readFileSync(LOCK, 'utf8').trim(); } catch (e) { continue; }
   let alive = false; try { process.kill(holder, 0); alive = true; } catch (e) { alive = e.code === 'EPERM'; }
   if (!alive) { try { fs.unlinkSync(LOCK); } catch (e) {} continue; }
+  if (ancestors.has(holder)) { ownLock = false; break; }
   if (waited % 30 === 0) console.log(`probe: waiting for the Chrome lock (held by PID ${holder})`);
   await new Promise((r) => setTimeout(r, 2000));
 }
-const unlock = () => { try { if (fs.readFileSync(LOCK, 'utf8').trim() === String(process.pid)) fs.unlinkSync(LOCK); } catch (e) {} };
+const unlock = () => { if (!ownLock) return; try { if (fs.readFileSync(LOCK, 'utf8').trim() === String(process.pid)) fs.unlinkSync(LOCK); } catch (e) {} };
 process.on('exit', unlock);
 const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'ge-probe-'));
 const port = 9400 + (process.pid % 400);

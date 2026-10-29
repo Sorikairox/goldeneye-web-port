@@ -17,12 +17,14 @@ PADS=('15000:CUPHOLD;18000:CNONE;18500:Z;19000:SLEFT;21000:SNONE;22000:Z'
       '15000:CUPHOLD;17000:CNONE;17500:Z;18000:SRIGHT;20000:SNONE;21000:Z'
       '15000:SLEFT;16500:SNONE;17000:CUPHOLD;19000:CNONE;19500:Z'
       '15000:CDOWNHOLD;16000:CNONE;16500:SRIGHT;18000:SNONE;18500:Z')
+# sidecars converted in the page from the ROM (the real path); SWEEP_DEV_ASSETS=1: the Python dev ones
+ASSETS=""; [ "${SWEEP_DEV_ASSETS:-0}" = 1 ] && ASSETS="&assets=../dev"
 mkdir -p "$OUT"; SUM="$OUT/summary.tsv"
 [ -f "$SUM" ] || printf 'level\tname\texceptions\tstalls\tanswers\tpacing\tfirst_error\n' > "$SUM"
 for S in $SEATS; do
   NP=${S%%,*}; R=${S#*,}; IDX=${R%%:*}; NAME=${R#*:}
   D="$OUT/$NP-$IDX-$NAME"; rm -rf "$D"
-  URL="http://localhost:8770/app/index.html?romurl=../dev/ge007.pal-final.z64&assets=../dev&env=GE_MPVIRT=$((NP-1))&env=GE_STARTMP=$NP,$IDX&env=GE_INPUTSCRIPT_MS=1&env=GE_INPUTSCRIPT=${PADS[0]}"
+  URL="http://localhost:${GE_PORT:-8770}/app/index.html?romurl=../dev/ge007.pal-final.z64$ASSETS&env=GE_MPVIRT=$((NP-1))&env=GE_STARTMP=$NP,$IDX&env=GE_INPUTSCRIPT_MS=1&env=GE_INPUTSCRIPT=${PADS[0]}"
   for ((p = 1; p < NP; p++)); do URL="$URL&env=GE_INPUTSCRIPT_P$p=${PADS[$p]}"; done
   node scripts/web/probe.mjs "$URL${GE_EXTRA_PARAMS:-}" "$SECS" "$D" "$EVERY" > "$D.probe.txt" 2>&1
   C="$D/console.log"
