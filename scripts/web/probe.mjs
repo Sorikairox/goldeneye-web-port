@@ -60,6 +60,8 @@ await call('Runtime.enable'); await call('Log.enable'); await call('Inspector.en
 // Debugger.enable), so the stack dump below can pause a stuck main thread
 if (process.env.PROBE_DEBUG) await call('Debugger.enable');
 if (process.env.PROBE_PROFILE) { await call('Profiler.enable'); await call('Profiler.setSamplingInterval', { interval: 500 }); }
+// PROBE_PRELOAD="<js>": runs in the page before its own scripts (fake navigator APIs, e.g. a gamepad)
+if (process.env.PROBE_PRELOAD) await call('Page.addScriptToEvaluateOnNewDocument', { source: process.env.PROBE_PRELOAD });
 tNav = Date.now(); await call('Page.navigate', { url });
 if (process.env.PROBE_PROFILE) setTimeout(() => call('Profiler.start'), +process.env.PROBE_PROFILE * 1000);
 const t0 = Date.now();
@@ -71,6 +73,29 @@ for (const ent of (process.env.PROBE_KEYS || '').split(',').filter(Boolean)) {
   const vk = code.startsWith('Key') ? code.charCodeAt(3) : code === 'Space' ? 32 : code === 'Enter' ? 13 : 0;
   const ev = (type) => call('Input.dispatchKeyEvent', { type, code, key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
   setTimeout(() => { ev('keyDown'); setTimeout(() => ev('keyUp'), +dur * 1000); }, +t * 1000);
+}
+// PROBE_CLICKS="20:150,30": trusted left clicks at the canvas centre at <s since navigation>, button held
+// <ms> (default 100) -- user gestures, e.g. for pointer lock
+const canvasCentre = async () => {
+  const q = await call('Runtime.evaluate', { expression: 'JSON.stringify(document.getElementById("canvas")?.getBoundingClientRect())', returnByValue: true });
+  const b = JSON.parse(q.result.result.value); return [b.x + b.width / 2, b.y + b.height / 2];
+};
+for (const ent of (process.env.PROBE_CLICKS || '').split(',').filter(Boolean)) {
+  const [t, hold = '100'] = ent.split(':');
+  setTimeout(async () => {
+    const [x, y] = await canvasCentre();
+    await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+    setTimeout(() => call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }), +hold);
+  }, +t * 1000);
+}
+// PROBE_EVALS="12:<js>|20:<js>": evaluate at <s since navigation>, log 'probe-eval <t>: <result>' to console.log
+for (const ent of (process.env.PROBE_EVALS || '').split('|').filter(Boolean)) {
+  const i = ent.indexOf(':'); const t = ent.slice(0, i), js = ent.slice(i + 1);
+  setTimeout(async () => {
+    const r = await Promise.race([call('Runtime.evaluate', { expression: js, returnByValue: true, awaitPromise: true, userGesture: true }), sleep(5000).then(() => null)]);
+    addLine(`probe-eval ${t}: ` + (r ? JSON.stringify(r.result?.result?.value ?? r.result?.exceptionDetails?.text) : 'no answer'));
+  }, +t * 1000);
 }
 let stacked = false, paused = null;
 ws.addEventListener('message', (m) => { const d = JSON.parse(m.data); if (d.method === 'Debugger.paused') paused = d.params; });
