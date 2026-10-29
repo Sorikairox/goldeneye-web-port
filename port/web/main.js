@@ -1,9 +1,12 @@
 // GoldenEye 007 web port: page side (docs/web/PLAN.md).
 // 1. get the player's ROM (file picker, IndexedDB copy, or a dev ?romurl=), normalise its byte order,
 //    check it is the EU ROM, write it into the Emscripten FS as /data/ge007.pal-final.z64;
-// 2. TEMPORARY (G1 dev only): ?assets=URL fetches the dev-generated sidecars (pcmodels/pccg) from a local
-//    server into /data/. The plan replaces this with in-browser conversion from the ROM;
-// 3. load ge007.js and call main().
+// 2. load ge007.js; before main(): fill the template binary's ROM-derived data from the ROM
+//    (ge007.romfill, port/src/web/romfill.c), then get the PC sidecars (pcmodels/pccg) from the IndexedDB
+//    cache or convert them from the ROM in wasm (port/src/convert/geconv.c, progress shown), and write
+//    them into /data/ where the game loads them (docs/web/ROMDATA.md);
+//    dev only: ?assets=URL fetches Python-generated sidecars from a local server instead;
+// 3. call main().
 'use strict';
 const EU_SHA1 = '167c3c433dec1f1eb921736f7d53fac8cb45ee31';
 const ROM_NAME = 'ge007.pal-final.z64';
@@ -59,7 +62,7 @@ async function acceptRom(buf, remember) {
   const sum = await sha1hex(z);
   if (sum !== EU_SHA1) throw new Error(`this ROM is not GoldenEye 007 (Europe): SHA-1 ${sum}`);
   if (remember) await idbPut('rom', z);
-  return z;
+  return [z, sum];
 }
 
 // --- dev-only sidecar fetch (temporary, see PLAN.md phase W2) -------------------------------------
@@ -75,14 +78,50 @@ async function fetchDevAssets(base) {
   return out;
 }
 
+// --- ROM data the game needs before main() -------------------------------------------------------
+const progressEl = document.getElementById('progress');
+function progress(done, total) {
+  if (!progressEl) return;
+  progressEl.style.display = total ? '' : 'none';
+  if (total) { progressEl.max = total; progressEl.value = done; }
+}
+const yieldToBrowser = () => new Promise((r) => setTimeout(r, 0));
+const SIDECAR_FILES = ['pcmodels-pal-final/pcmodels.bin', 'pcmodels-pal-final/manifest.csv',
+                       'pccg-pal-final/pccg.bin', 'pccg-pal-final/manifest.csv'];   // blob order of ge_web_geconv_blob
+// Convert the ROM's models / backgrounds / stage setups into the PC sidecar layout, in wasm. ~600 steps
+// (one file each); yields to the browser every ~30 ms so the progress bar moves.
+async function convertSidecars(M, romp, romlen) {
+  const t0 = performance.now();
+  const total = M._ge_web_geconv_begin(romp, romlen);
+  if (total < 0) throw new Error('sidecar conversion failed to start (see the log)');
+  let left = total, last = performance.now();
+  status('converting the game data from your ROM (first start only)…');
+  while (left > 0) {
+    left = M._ge_web_geconv_step();
+    if (left < 0) throw new Error('sidecar conversion failed (see the log)');
+    if (performance.now() - last > 30) { progress(total - left, total); await yieldToBrowser(); last = performance.now(); }
+  }
+  const out = {};
+  SIDECAR_FILES.forEach((f, i) => {
+    const a = M._ge_web_geconv_blob(i, 0), n = M._ge_web_geconv_blob(i, 1);
+    out[f] = M.HEAPU8.slice(a, a + n);
+  });
+  M._ge_web_geconv_end();
+  progress(0, 0);
+  log(`[page] sidecars converted in wasm: ${total} steps, ${(performance.now() - t0).toFixed(0)} ms`);
+  return out;
+}
+
 // --- start the game ------------------------------------------------------------------------------
 let started = false;
-async function start(rom) {
+async function start(rom, romsum) {
   if (started) return; started = true;
   document.getElementById('rompick').style.display = 'none';
   status('loading…');
   let dev = null;
-  if (params.get('assets')) { dev = await fetchDevAssets(params.get('assets')); log('[page] dev sidecars fetched'); }
+  if (params.get('assets')) { dev = await fetchDevAssets(params.get('assets')); log('[page] dev sidecars fetched (dev URL, never deploy)'); }
+  // the fill table of the template binary (absent only in unstripped dev builds: GE_NOSTRIP=1)
+  const fillP = fetch('ge007.romfill').then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
   window.Module = {
     canvas: document.getElementById('canvas'),
     print: (s) => log(s),
@@ -96,14 +135,34 @@ async function start(rom) {
       }
     }],
     onAbort: (w) => { log('[page] ABORT: ' + w); status('crashed: ' + w); },
-    onRuntimeInitialized() {
-      const FS = Module.FS;
+    async onRuntimeInitialized() {
+      const M = Module, FS = Module.FS;
       FS.mkdir('/data');
       FS.writeFile('/data/' + ROM_NAME, rom);
-      if (dev) for (const [f, d] of Object.entries(dev)) {
-        const dir = '/data/' + f.split('/')[0];
-        try { FS.mkdir(dir); } catch (e) {}
-        FS.writeFile('/data/' + f, d);
+      const romp = M._ge_web_alloc(rom.length);
+      M.HEAPU8.set(rom, romp);
+      try {
+        const fill = await fillP;
+        if (fill) {
+          const t = new Uint8Array(fill), tp = M._ge_web_alloc(t.length);
+          M.HEAPU8.set(t, tp);
+          const rc = M._ge_web_romfill(romp, rom.length, tp, t.length);
+          M._ge_web_free(tp);
+          if (rc !== 0) throw new Error('could not rebuild the game data from this ROM (romfill ' + rc + ')');
+        } else log('[page] no ge007.romfill: unstripped dev build');
+        let side = dev;
+        const key = `sidecars-v${M._ge_web_geconv_version()}-${romsum}`;
+        if (!side) { side = await idbGet(key); if (side) log('[page] sidecars from IndexedDB'); }
+        if (!side) { side = await convertSidecars(M, romp, rom.length); await idbPut(key, side); }
+        for (const [f, d] of Object.entries(side)) {
+          const dir = '/data/' + f.split('/')[0];
+          try { FS.mkdir(dir); } catch (e) {}
+          FS.writeFile('/data/' + f, d);
+        }
+      } catch (e) {
+        status(String(e.message || e)); log('[page] ' + (e.stack || e)); return;
+      } finally {
+        M._ge_web_free(romp);
       }
       FS.chdir('/');
       status('');
@@ -123,16 +182,16 @@ window.addEventListener('error', (e) => log('[page] error: ' + (e.message || e))
 window.addEventListener('unhandledrejection', (e) => log('[page] rejection: ' + (e.reason && (e.reason.stack || e.reason))));
 document.getElementById('romfile').addEventListener('change', async (ev) => {
   const f = ev.target.files[0]; if (!f) return;
-  try { start(await acceptRom(await f.arrayBuffer(), true)); } catch (e) { status(String(e.message || e)); }
+  try { start(...await acceptRom(await f.arrayBuffer(), true)); } catch (e) { status(String(e.message || e)); }
 });
 (async () => {
   const url = params.get('romurl');            // dev only: a local copy served by scripts/web/serve.sh
   if (url) {
-    try { const r = await fetch(url); start(await acceptRom(await r.arrayBuffer(), false)); }
+    try { const r = await fetch(url); start(...await acceptRom(await r.arrayBuffer(), false)); }
     catch (e) { status('romurl: ' + (e.message || e)); }
     return;
   }
   const saved = await idbGet('rom');
-  if (saved) { status('using the ROM stored in this browser'); try { start(await acceptRom(saved.buffer || saved, false)); } catch (e) { status(String(e.message || e)); } }
+  if (saved) { status('using the ROM stored in this browser'); try { start(...await acceptRom(saved.buffer || saved, false)); } catch (e) { status(String(e.message || e)); } }
   else status('choose your ROM to start');
 })();

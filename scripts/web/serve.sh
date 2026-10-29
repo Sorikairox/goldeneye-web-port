@@ -5,7 +5,7 @@
 # copy + dev sidecars) -> /dev. The page fetches them with ?romurl=../dev/ge007.pal-final.z64&assets=../dev
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
-NAME=goldeneye-web-serve
+NAME=${GE_SERVE:-goldeneye-web-serve}   # G4 uses GE_SERVE=goldeneye-g4-serve + port 8771
 if [ "${1:-}" = stop ]; then docker rm -f $NAME >/dev/null 2>&1 || true; exit 0; fi
 PORT=${1:-8770}
 if [ "$(docker inspect -f '{{.State.Running}}' $NAME 2>/dev/null)" != true ]; then

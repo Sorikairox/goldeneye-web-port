@@ -501,6 +501,17 @@ if(EMSCRIPTEN)
     DEPENDS "${SRC_ROMASSETS}" "${CMAKE_SOURCE_DIR}/scripts/web/gen_cart_wasm.py")
   set(SRC_ROMASSETS "${_WASM_CART}")
   list(FILTER SRC_PORT EXCLUDE REGEX "port/src/(crash|updatecheck)\\.c$")
+  # In-browser sidecar conversion (port/src/convert/geconv.c, port/src/web/geconvweb.c): its
+  # filelist / file-table texts and the model-header list (names and offsets only, G4).
+  set(_GECONV_IN "${CMAKE_BINARY_DIR}/geconv_inputs.c")
+  set(_GECONV_FL "${CMAKE_SOURCE_DIR}/scripts/filelist.${ASSET_REGION}.csv")
+  set(_GECONV_RT "${CMAKE_SOURCE_DIR}/assets/obseg/file_resource_table.inc.c")
+  file(GLOB_RECURSE _GECONV_HDRS "${CMAKE_SOURCE_DIR}/assets/*odelFileHeader*.inc.c")
+  add_custom_command(OUTPUT "${_GECONV_IN}"
+    COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/web/gen_geconv_inputs.py" "${_GECONV_FL}" "${_GECONV_RT}"
+            "${CMAKE_SOURCE_DIR}/assets" "${_GECONV_IN}"
+    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/web/gen_geconv_inputs.py" "${_GECONV_FL}" "${_GECONV_RT}" ${_GECONV_HDRS})
+  list(APPEND SRC_PORT "${_GECONV_IN}")
 else()
   list(FILTER SRC_PORT EXCLUDE REGEX "port/src/web/")
 endif()
@@ -777,7 +788,7 @@ if(EMSCRIPTEN)
     -sGL_ENABLE_GET_PROC_ADDRESS=1
     -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=65536
     -sEXIT_RUNTIME=0 -sINVOKE_RUN=0
-    -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain,ccall
+    -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain,ccall,HEAPU8
     -sFORCE_FILESYSTEM=1 -sENVIRONMENT=web
     -Wl,--wrap=emscripten_sleep -Wl,--wrap=alCSPGetState
     -Wl,-Map=${CMAKE_BINARY_DIR}/ge007.map)
