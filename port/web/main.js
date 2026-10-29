@@ -169,7 +169,15 @@ async function start(rom, romsum) {
         let side = dev;
         const key = `sidecars-v${M._ge_web_geconv_version()}-${romsum}`;
         if (!side) { side = await idbGet(key); if (side) log('[page] sidecars from IndexedDB'); }
-        if (!side) { side = await convertSidecars(M, romp, rom.length); await idbPut(key, side); }
+        if (!side) {
+          side = await convertSidecars(M, romp, rom.length); await idbPut(key, side);
+          // dev (&reloadonce): reload once after caching, to test the IndexedDB path in one browser profile
+          if (params.has('reloadonce')) { params.delete('reloadonce'); location.replace('?' + params.toString()); return; }
+        }
+        if (params.has('fillcheck')) for (const [f, d] of Object.entries(side)) {   // dev: compare with the Python output
+          const h = [...new Uint8Array(await crypto.subtle.digest('SHA-256', d))].map((x) => x.toString(16).padStart(2, '0')).join('');
+          log(`[page] sidecar ${f}: ${d.length} bytes, sha256 ${h}`);
+        }
         for (const [f, d] of Object.entries(side)) {
           const dir = '/data/' + f.split('/')[0];
           try { FS.mkdir(dir); } catch (e) {}
