@@ -15,10 +15,13 @@ for t in romfill romscan; do
   fi
 done
 if [ ! -f "$ROM" ]; then
-  echo "romfill: $ROM missing: the site keeps the ROM-derived data (dev only, never deploy)"
-  rm -f build-web/site/ge007.romfill
-  exit 0
+  echo "romfill: $ROM missing: cannot strip the ROM-derived data. Put the dev ROM copy there, or build"
+  echo "         with GE_NOSTRIP=1 for an unstripped dev-only site (marked DEV-UNSTRIPPED, refused by"
+  echo "         scripts/web/deploy_check.sh)."
+  rm -f build-web/site/ge007.romfill build-web/site/ge007.wasm
+  exit 1
 fi
+rm -f build-web/site/DEV-UNSTRIPPED
 node $T/romfill.js "$ROM" $B/ge007.wasm $B/ge007.map build-web/site/ge007.wasm build-web/site/ge007.romfill \
   build-web/romfill-report.tsv
 node $T/romscan.js -t build-web/romscan.tsv "$ROM" build-web/site/* | tail -1 | sed 's/^/romscan (site): /' || true

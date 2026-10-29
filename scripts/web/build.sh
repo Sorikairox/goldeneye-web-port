@@ -26,5 +26,8 @@ ge_exec bash -c "mkdir -p $B build-web && \
   echo \"signature mismatches: \$sm (fix: scripts/web/sigadapt.py scan $B/build.log $B), bitcast_invalid traps: \$bi\"; \
   mkdir -p build-web/site && cp $B/ge007.js $B/ge007.wasm build-web/ && cp port/web/* build-web/site/ && \
   cp $B/ge007.js $B/ge007.wasm build-web/site/ && \
-  { [ \"${GE_NOSTRIP:-0}\" = 1 ] || bash scripts/web/romfill.sh $ROMID; } && \
+  if [ \"${GE_NOSTRIP:-0}\" = 1 ]; then rm -f build-web/site/ge007.romfill; \
+    echo 'unstripped dev build: contains ROM-derived data, never deploy' > build-web/site/DEV-UNSTRIPPED; \
+    echo 'GE_NOSTRIP=1: site is UNSTRIPPED (build-web/site/DEV-UNSTRIPPED), dev only'; \
+  else bash scripts/web/romfill.sh $ROMID; fi && \
   ls -la build-web/site/ge007.wasm build-web/site/ge007.js | awk '{print \$5, \$9}'"

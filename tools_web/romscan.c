@@ -22,7 +22,9 @@
 #include <string.h>
 #include <zlib.h>
 
-#define BLK 32
+#ifndef BLK
+#define BLK 32   /* -DBLK=8 for scans down to 15-byte runs (more memory) */
+#endif
 
 typedef struct {
     char name[96];
