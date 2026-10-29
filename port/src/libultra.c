@@ -65,8 +65,8 @@
  * this file sits in a `while (!condition)` loop, so an optimistic wake-up only
  * re-checks the condition. */
 #include "web/webkernel.h"
-#define pthread_cond_wait(c, m)          webkernelWait()
-#define pthread_cond_timedwait(c, m, t)  (webkernelWait(), 0)
+#define pthread_cond_wait(c, m)          webkernelWait(c)
+#define pthread_cond_timedwait(c, m, t)  (webkernelWait(c), 0)
 #define pthread_cond_signal(c)           webkernelSignal()
 #define pthread_cond_broadcast(c)        webkernelSignal()
 #endif
@@ -393,6 +393,20 @@ void portWebRetrace(void)
     portServiceTimers();
 }
 unsigned portWebRetracePeriodUs(void) { return g_tickIntervalUs; }
+
+/* webkernel stall report: which queue a blocked thread waits on. */
+void portWebDescribeWait(const void *what, char *buf, int len)
+{
+    for (int i = 0; i < g_pqCount; ++i) {
+        if ((const void *)&g_pq[i].cond == what && g_pq[i].os) {
+            OSMesgQueue *mq = g_pq[i].os;
+            snprintf(buf, len, "on mq %p (%d/%d msgs)%s", (void *)mq, mq->validCount,
+                     mq->msgCount, mq == g_viRetraceMQ ? " = VI retrace queue" : "");
+            return;
+        }
+    }
+    snprintf(buf, len, "on %p", what);
+}
 #endif
 
 /* ------------------------------------------------------------------------ */
@@ -651,6 +665,9 @@ s32 osSendMesg(OSMesgQueue *mq, OSMesg msg, s32 flag)
     while (mq->validCount >= mq->msgCount) {
         if (flag != OS_MESG_BLOCK) {
             pthread_mutex_unlock(&pq->lock);
+#if defined(GE_WEB)
+            webkernelSpinCheck();
+#endif
             return -1;
         }
         pthread_cond_wait(&pq->cond, &pq->lock);
@@ -671,6 +688,9 @@ s32 osRecvMesg(OSMesgQueue *mq, OSMesg *msg, s32 flag)
     while (mq->validCount == 0) {
         if (flag != OS_MESG_BLOCK) {
             pthread_mutex_unlock(&pq->lock);
+#if defined(GE_WEB)
+            webkernelSpinCheck();   /* a NOBLOCK poll loop is a busy-wait too */
+#endif
             return -1;
         }
         /* GE_DETERM (§D117, M-52 2nd attempt): __scMain (sched.c) is the

@@ -24,8 +24,10 @@ extern "C" {
 /* Start a fiber for a game thread. prio points at the OSThread's priority
  * (read live, so osSetThreadPri is honoured). */
 void webkernelSpawn(void (*entry)(void *), void *arg, const int *prio, int id);
-/* Block the current fiber until webkernelSignal() is called (by anyone). */
-void webkernelWait(void);
+/* Block the current fiber until webkernelSignal() is called (by anyone).
+ * `what` identifies the wait for diagnostics (libultra.c passes the queue's
+ * condition variable; portWebDescribeWait() turns it back into a queue). */
+void webkernelWait(const void *what);
 /* Something a blocked thread may wait for changed. Preempts the current fiber
  * if a higher-priority thread was waiting (libultra osSendMesg semantics). */
 void webkernelSignal(void);
@@ -41,6 +43,9 @@ int webkernelInFiber(void);
  * Every animation frame: pump(), then retrace() once per due console retrace
  * (period_us, catch-up capped), then run the ready fibers until all block. */
 void webkernelMainLoop(void (*pump)(void), void (*retrace)(void), unsigned period_us);
+
+/* Provided by libultra.c: describe a wait object for the stall report. */
+void portWebDescribeWait(const void *what, char *buf, int len);
 
 #ifdef __cplusplus
 }

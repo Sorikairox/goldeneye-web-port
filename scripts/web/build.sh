@@ -12,5 +12,8 @@ ge_exec bash -c "mkdir -p build-web && \
   ninja -C build-web -k 0 >$LOG 2>&1; rc=\$?; \
   grep -E 'error:|undefined symbol' $LOG | sort | uniq -c | sort -rn | head -40; \
   [ \$rc = 0 ] || { tail -5 $LOG; exit \$rc; }; \
+  sm=\$(grep -c 'function signature mismatch' $LOG || true); \
+  bi=\$(strings -n 8 build-web/ge007.wasm | grep -c '_bitcast_invalid' || true); \
+  echo \"signature mismatches: \$sm (fix: scripts/web/sigadapt.py scan $LOG build-web), bitcast_invalid traps: \$bi\"; \
   mkdir -p build-web/site && cp port/web/* build-web/site/ && cp build-web/ge007.js build-web/ge007.wasm build-web/site/ && \
   ls -la build-web/site/ge007.wasm build-web/site/ge007.js | awk '{print \$5, \$9}'"

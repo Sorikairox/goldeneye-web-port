@@ -40,6 +40,7 @@ typedef struct {
     unsigned waitSeq;      /* signal counter value when it blocked */
     unsigned order;        /* FIFO among equal priorities */
     unsigned switches;
+    const void *what;      /* what it waits on (diagnostics) */
 } WkThread;
 
 static WkThread s_threads[WK_MAX_THREADS];
@@ -52,6 +53,8 @@ static unsigned s_signalSeq = 1;
 static unsigned s_orderSeq = 0;
 static unsigned s_spinCalls = 0;
 static int s_inited = 0;
+static unsigned s_lastRunFrame = 0;   /* last frame any fiber ran */
+static int s_stallReported = 0;
 
 static void (*s_pump)(void);
 static void (*s_retrace)(void);
@@ -125,7 +128,7 @@ void webkernelSpawn(void (*entry)(void *), void *arg, const int *prio, int id)
 
 int webkernelInFiber(void) { return s_cur != NULL; }
 
-void webkernelWait(void)
+void webkernelWait(const void *what)
 {
     s_spinCalls = 0;
     if (!s_cur) {
@@ -134,6 +137,7 @@ void webkernelWait(void)
     }
     s_cur->state = WK_WAITING;
     s_cur->waitSeq = s_signalSeq;
+    s_cur->what = what;
     wkSwitchOut();
 }
 
@@ -178,16 +182,41 @@ static void wkRunReady(void)
         t->state = WK_RUNNING;
         t->switches++;
         s_spinCalls = 0;
+        s_lastRunFrame = s_frames;
         emscripten_fiber_swap(&s_mainFiber, &t->fiber);
         s_cur = NULL;
+
     }
     sysLogPrintf(LOG_WARNING, "webkernel: %d switches in one frame; back to the browser",
                  WK_MAX_SWITCHES_PER_FRAME);
 }
 
+static const char *wkStateName(int st)
+{
+    static const char *n[] = { "free", "ready", "running", "waiting", "spin", "dead" };
+    return st >= 0 && st <= WK_DEAD ? n[st] : "?";
+}
+
+/* Every thread blocked for ~2 s of frames: report who waits on what, once. */
+static void wkStallCheck(void)
+{
+    if (s_frames - s_lastRunFrame < 120 || s_stallReported) return;
+    s_stallReported = 1;
+    sysLogPrintf(LOG_ERROR, "webkernel: STALL, no thread ran for %u frames:", s_frames - s_lastRunFrame);
+    for (int i = 0; i < WK_MAX_THREADS; i++) {
+        WkThread *t = &s_threads[i];
+        char buf[160] = "";
+        if (t->state == WK_FREE) continue;
+        if (t->state == WK_WAITING) portWebDescribeWait(t->what, buf, sizeof buf);
+        sysLogPrintf(LOG_ERROR, "  thread %d prio %d %s switches %u %s", t->id, wkPrio(t),
+                     wkStateName(t->state), t->switches, buf);
+    }
+}
+
 static void wkFrame(void)
 {
     s_frames++;
+
     /* Busy-waiting threads get another go this frame. */
     for (int i = 0; i < WK_MAX_THREADS; i++)
         if (s_threads[i].state == WK_SPIN) s_threads[i].state = WK_READY;
@@ -208,6 +237,7 @@ static void wkFrame(void)
     }
     if (now - s_nextRetraceMs > 4 * s_periodMs) s_nextRetraceMs = now + s_periodMs;
     if (!due) wkRunReady();   /* spinning threads (frame pacing) poll the clock */
+    wkStallCheck();
 }
 
 void webkernelMainLoop(void (*pump)(void), void (*retrace)(void), unsigned period_us)
