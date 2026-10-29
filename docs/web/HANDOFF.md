@@ -3,26 +3,39 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G1, 2026-10-29)
+## Current state (after G2, 2026-10-29)
 
-- The native PC port builds for the browser (EU, pal-final) with Emscripten in Docker and **boots to its
-  first frames in headless Chrome: the 3D Nintendo logo, then the Rareware logo** (screenshots in the
-  gitignored `port_work/g1/`: `nintendo-logo.png`, `rareware-logo.png`).
-- ROM supplied through the page: file picker (EU SHA-1 check, IndexedDB) or the dev URL `?romurl=`.
-- Sidecars: **dev-generated** by the Python converters from the EU ROM alone (`data/pcmodels-pal-final/`,
-  `data/pccg-pal-final/`, gitignored), fetched by the page from the local server with `?assets=`
-  (temporary, PLAN 3.2).
-- **Open bug (next session): ~17 s in, right after the Rareware logo, the page's main thread stops
-  answering** (no more frames, no logs, no STALL report, `Debugger.pause` does not take effect,
-  screenshots keep the last frame). Last log lines are ordinary fiber switches (sched thread 2 /
-  audio thread 4 / main thread 3). Suspects, in order: (1) a busy-wait in a fiber on a flag/variable
-  another thread sets, with no OS call inside (cooperative scheduling hangs; on native the other thread
-  runs) — e.g. audio manager vs game thread, or a loop around `osGetTime`/`osGetCount`-free polling;
-  (2) a non-interruptible bulk memory op with a wrapped huge length (MEMORY64=2 lowering wraps lengths
-  too); (3) something in the Rare→intro transition (stage load, decompression, framebuffer copy).
-  Tools: `PROBE_PROFILE=12 node scripts/web/probe.mjs ...` (CPU profile from 12 s), a Release build
-  (smaller, debugger attaches faster), temporary `sysLogPrintf` in `webkernel.c` `wkRunReady` (log
-  switches after frame ~850; the log showed the last switches, see G1 notes below).
+- **The game runs in headless Chrome from power-on into Dam by the real route**: Nintendo/Rareware
+  logos, gun-barrel intro + attract demos, GoldenEye title, file select, mission select, difficulty,
+  briefing, Dam intro camera, gameplay (walk, turn, fire, guards, HUD). Contact sheets in the gitignored
+  `port_work/route-dam/sheet.png` (swiftshader) and `port_work/g2/route-metal/sheet.png` (Metal);
+  keyboard test (warp `-level_33`, W/D keys) in `port_work/g2/keys2/sheet.png`.
+- **Pacing:** retraces 50.0/s and game frames 50/s in Dam, real time (not det), both GL backends;
+  ~30 retraces dropped by the catch-up cap during the mission load (expected, heavy load frames).
+  The `pacing:` log line every 10 s reports it.
+- **Sound:** SDL2 Web Audio (ScriptProcessor) runs and is non-silent (peak 0.74 at the intro music,
+  `scripts/web/audiocheck.js`); context 48 kHz, SDL converts from 22050 Hz. SDL resumes a suspended
+  context once the page has user activation (ROM picker click / key). Not listened to by ear (headless,
+  muted): pitch/tempo unverified.
+- **Input:** keyboard through SDL works in the page (CDP key events: W walks, D strafes); scripted pad
+  `GE_INPUTSCRIPT` works (route test). Gamepad (Gamepad API) and mouse/pointer lock untested.
+- Native build: compiles and links on Linux amd64 (container `goldeneye-linux`, emulated on this Mac);
+  running it there crashes in `texReadBits` at boot **also for unmodified upstream `main`**, so that is
+  the emulated environment, not our changes; native runtime is unverified here. All G2 code changes are
+  under `GE_WEB` / `__EMSCRIPTEN__` / `if(EMSCRIPTEN)`.
+
+### The G1 "hang" was two bugs (G2)
+1. SDL2's Emscripten backend calls `emscripten_sleep(0)` in `SDL_GL_SwapWindow` (and `SDL_Delay`)
+   whenever ASYNCIFY is linked. The swap runs in the scheduler fiber, so the sleep unwound the fiber as if
+   it were the main loop, paused the Emscripten main loop and later rewound into the wrong context; after
+   ~870 frames the main loop died. Fix: `SDL_HINT_EMSCRIPTEN_ASYNCIFY=0` (gfx_sdl2.cpp) + a
+   `--wrap=emscripten_sleep` guard that refuses (and logs once) a sleep from a fiber.
+2. `music.c musicTrack{1,2,3}Play`: `while (alCSPGetState(seqp));` waits for the audio thread to process
+   the stop event. Cooperative fibers never run the audio thread there. Fix: `--wrap=alCSPGetState`, the
+   wrapper calls `webkernelSpinCheck()` (like `osGetCount`), so the fiber parks after 64 polls.
+Then a call-signature trap: the vertex allocator (`void get_ptr_allocated_block_for_vertices(int)`
+called as `struct Vertex *(*)(s32)`, the register ABI carried dynAllocate's return); fixed with the
+port-side `ge_web_vertex_allocator` installed via the build copy of initweaponanigroups.c.
 
 ## How to build, run, test
 
@@ -41,6 +54,23 @@ scripts/web/serve.sh            # 127.0.0.1:8770 only; prints the dev URL
 node scripts/web/probe.mjs 'http://localhost:8770/app/index.html?romurl=../dev/ge007.pal-final.z64&assets=../dev' 20 port_work/shots 4
                                 # headless Chrome (host), muted, own profile; PNGs + console.log in port_work/shots
 ```
+
+Debug / test parameters of the page (dev URL): `&env=NAME=VALUE` (repeatable) sets a C `getenv`
+variable, `&args=-level_33` passes command-line args (warp to Dam). Useful variables: `GE_WKTRACE=<browser
+frame>` (log every fiber switch/wait/spin/gfx task from that frame; a 256-entry ring `ge_web_wk_ring`
+always), `GE_INPUTSCRIPT=...` (+ `GE_INPUTSCRIPT_MS=1`) scripted pad (syntax in `port/src/input.c`).
+Probe env: `PROBE_DEBUG=1` (debugger on before navigation: a stuck main thread then gives its wasm stack
+— this found bug 2), `PROBE_PROFILE=<s>`, `PROBE_KEYS="24:KeyD:1,28:KeyW:3"` (real key events),
+`PROBE_EVAL="$(cat scripts/web/audiocheck.js)"`, `PROBE_ANGLE=metal` (real GPU), `PROBE_FULL=1`
+(whole page instead of the canvas), `PROBE_SCALE`. Every run writes `console.log` (streamed, timestamps)
+and `sheet.png` (contact sheet) into its outdir.
+
+```sh
+scripts/web/route_dam.sh [secs=75] [outdir=port_work/route-dam]   # real route to Dam + walk/fire; look at sheet.png
+```
+Native Linux reference build (amd64, emulated; compiles/links, does not run under emulation):
+`docker build --platform linux/amd64 -t goldeneye-linux-amd64 -f scripts/web/Dockerfile.linux scripts/web`,
+then in container `goldeneye-linux`: `cmake -S . -B build-linux -G Ninja -DROMID=pal-final && ninja -C build-linux`.
 
 Release build: `ge_exec bash -c "emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release && ninja -C build-web"`
 (2.7 MB wasm vs 12 MB with DWARF), then copy `ge007.{js,wasm}` into `build-web/site/`.
@@ -82,9 +112,34 @@ After adding/changing code, if the build reports signature mismatches:
 - headless Chrome screenshots keep working while the page's main thread is stuck (the compositor
   serves the last frame): check `Runtime.evaluate` answers before trusting "it runs".
 
-## Next session (G2) — recommended
-1. Fix the post-Rareware-logo hang (above) and get to the intro / title / main menu, then Dam.
-2. Verify 50 Hz pacing in real time (frame counter vs wall clock), input in the page, then commit.
-3. Optional reference: a Linux amd64 container building the native PAL port (`goldeneye-linux`,
-   headless, Xvfb + `GE_PCDUMP`) to compare frames with the web build (not built in G1).
-Then W2 (C emitters for the sidecars) per PLAN.
+## Traps found in G2
+- Libraries that yield to the browser on their own break a fiber scheduler: SDL2 + ASYNCIFY does
+  `emscripten_sleep(0)` in `SDL_GL_SwapWindow`/`SDL_Delay`. It "works" for hundreds of frames, then the
+  main loop stops (no exception, page idle). Hint `SDL_HINT_EMSCRIPTEN_ASYNCIFY=0`; wrap `emscripten_sleep`.
+- Busy-waits on state another thread changes need not touch the clock or a queue: a plain getter
+  (`alCSPGetState`) in a `while` loop. Find them with `PROBE_DEBUG=1`; fix with `-Wl,--wrap=<getter>` +
+  `webkernelSpinCheck()`, game code untouched.
+- A page stuck in wasm does not process a `Debugger.enable` sent after the hang; enable before navigating.
+- Function pointers installed with a decompiled `void f()` and called as returning a value (the MIPS/x86
+  return register carried a callee's result): wasm traps, an adapter must return that value.
+- Emscripten glue bug with `-sMEMORY64=2`: the `beforeunload` handler mixes BigInt and Number
+  (`UTF8ToString` of SDL's returned pointer), an exception at page unload. Harmless so far (open).
+
+## Open problems
+- `beforeunload` BigInt exception at page close (above): SDL then never sees `SDL_APP_TERMINATING`;
+  matters once saves/config are written on quit (W4). Fix: override the callback or patch the glue.
+- glad logs ~150 "could not find function" lines (desktop-only GL entry points) at start: silence.
+- `ScriptProcessorNode` deprecated: AudioWorklet in W4; audio by ear unverified.
+- Gamepad, mouse (pointer lock) untested; no hidden-tab pause yet.
+- Det mode (`GE_DETERM`) not tried on the web; the route test uses wall-clock scripted pad timing
+  (`GE_INPUTSCRIPT_MS=1`), generous gaps; a read-count script would be deterministic once det works.
+- 2.06 GiB initial memory (desktop only), dev sidecars via `?assets=` (W2).
+
+## Next session (G3) — recommended
+1. W2 is gated on the user's decision (recorded in PLAN 3.2, 2026-10-29); the user also still decides
+   hosting. Before W2: a broader runtime sweep with `-level_XX` warps over all 20 solo levels (screenshot
+   + `pacing:` + no EXCEPTION each; a `scripts/web/level_sweep.sh`), fix traps found (expect more
+   indirect-call signature mismatches and busy-waits; tools above).
+2. Page polish needed for a real player: beforeunload fix, glad log silence, pointer lock on click,
+   hidden-tab pause, gamepad check.
+3. Then W2 (C sidecar emitters in wasm, IndexedDB cache) per PLAN.

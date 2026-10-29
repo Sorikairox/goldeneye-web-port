@@ -466,6 +466,16 @@ flash, controller pak).
     at `GLOBAL_BASE`, or turn the name into a dereferenced pointer macro. (GoldenEye G1)
 28. Trusting a headless screenshot as proof the page runs: the compositor keeps serving the last frame while
     the main thread is stuck; also check that `Runtime.evaluate` answers. (GoldenEye G1)
+29. Libraries that yield to the browser by themselves inside a fiber: SDL2 linked with ASYNCIFY calls
+    `emscripten_sleep(0)` in `SDL_GL_SwapWindow` and `SDL_Delay`. It unwinds the fiber as if it were the
+    main loop; it works for hundreds of frames, then the main loop silently dies. Set
+    `SDL_HINT_EMSCRIPTEN_ASYNCIFY=0` and link `--wrap=emscripten_sleep` with a guard that refuses it in a
+    fiber. (GoldenEye G2)
+30. Busy-waits through a plain getter on state another thread changes (`while (alCSPGetState(p));` until
+    the audio thread processes a stop): no clock, no queue, so no yield. `-Wl,--wrap=<getter>` that counts
+    polls and parks the fiber; the game code stays as is. (GoldenEye G2)
+31. A page stuck in wasm never processes a late `Debugger.enable`: enable the debugger before navigating,
+    then `Debugger.pause` returns the wasm stack of the stuck loop. (GoldenEye G2)
 
 ---
 

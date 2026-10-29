@@ -174,6 +174,14 @@ Upstream also tracks `tools_pc/golden/**/*.png` (189 reference frames) and docs 
 keep them out of the site and of our commits.
 
 ### 3.2 What must be produced in the browser, and how
+
+**User decision (2026-10-29):** bulk media (logos, textures, fonts, audio) and game data tables (weapon
+stats, model headers, skeletons, image tables, setup data) compiled into the binary are ROM data and must
+come from the player's ROM in the browser (template + fill at boot, C sidecar converters run in wasm,
+cached in IndexedDB). Small initialised constants inside the decompiled game C files count as code and may
+stay. Deploy gate: scan the shipped wasm/js/site for ROM byte runs before every deploy. (Classes B, C, E
+of 3.1 must go; class D: only the small constants stay — the W3 size audit draws the line per table.)
+
 1. **Sidecars (E): port the three emitters to C** (`port/src/preprocess/` style, as in the PD port),
    run them in wasm at first launch on the player's ROM, cache the output in IndexedDB keyed by
    (ROM SHA-1, converter version), copy into the cart window. Their committed inputs: filelist/names
