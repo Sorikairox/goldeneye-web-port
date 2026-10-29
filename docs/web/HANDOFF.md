@@ -80,6 +80,41 @@ After adding/changing code, if the build reports signature mismatches:
 `ge_exec python3 scripts/web/sigadapt.py scan build-web/build.log build-web`, review the new rows in
 `scripts/web/sigadapt.tsv` (note column), rebuild.
 
+## ROM data from the player's ROM (G4, 2026-10-30)
+
+Details, numbers and what is left: `docs/web/ROMDATA.md`.
+
+- **Sidecars are made in the browser** (W2): before `main()` the page runs the C port of the Python
+  converters (`port/src/convert/geconv.c`) inside the game wasm on the player's ROM (~620 steps,
+  ~225 ms, progress bar), caches the four files in IndexedDB (`sidecars-v<GECONV_VERSION>-<sha1>`)
+  and writes them to MEMFS `/data/`. Output byte-identical to the Python converters
+  (`scripts/web/geconv_check.sh`, and `&fillcheck` hashes in the page). `?assets=` is dev-only now.
+- **Template + fill** (W3): `build.sh` runs `scripts/web/romfill.sh` after the link:
+  `tools_web/romfill.c` zeroes every run of the game's / assets' data that also exists in the ROM
+  (raw, RZ streams, 16/32-bit swapped; display lists and mixed-width fields included) in
+  `build-web/site/ge007.wasm` and writes the offsets-only table `build-web/site/ge007.romfill`; the
+  page applies it with `ge_web_romfill()` before `main()` and checks two CRC32s against the
+  original build. EU: 13,462 ranges, 155,056 bytes; `fillcheck` SHA-256 equal.
+- **Deploy gate:** `scripts/web/deploy_check.sh` (romscan >= 64 B outside `romscan.allow`, stripped
+  site, no ROM/sidecar files). romscan: 178 runs / 58,097 B before G4 -> 4 runs / 280 B after, all
+  allowlisted third-party tables.
+- A stripped build needs `data/ge007.pal-final.z64` at build time (else the build fails and removes
+  the site wasm); `GE_NOSTRIP=1` makes an unstripped dev site marked `DEV-UNSTRIPPED`.
+
+```sh
+scripts/web/geconv_check.sh                       # C converters == Python converters (EU)
+scripts/web/romscan.sh [site] [minrun=64]          # deploy gate scan (also run by deploy_check.sh)
+scripts/web/deploy_check.sh                        # must exit 0 before any deploy
+python3 scripts/web/fillcheck.py build-web/ge007.wasm build-web/site/ge007.romfill   # in the container;
+#   compare with the page's "[page] fillcheck: ... sha256" line (dev URL parameter &fillcheck)
+GE_NOSTRIP=1 scripts/web/build.sh                  # dev: unstripped site (DEV-UNSTRIPPED)
+ROUTE_DEV_ASSETS=1 GE_PORT=8771 scripts/web/route_dam.sh   # route with the Python dev sidecars
+```
+Page dev parameters added: `&fillcheck` (hashes after the fill and of the sidecars),
+`&reloadonce` (reload once after converting, to exercise the IndexedDB path in one profile).
+Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `goldeneye-g4-dev-build`),
+`GE_SERVE=goldeneye-g4-serve scripts/web/serve.sh 8771`. Source `env.sh` from bash only.
+
 ## Where things are
 
 | What | Where |
@@ -92,6 +127,28 @@ After adding/changing code, if the build reports signature mismatches:
 | call adapters | `scripts/web/sigadapt.py`, `scripts/web/sigadapt.tsv` → `build-web/sigadapt.c` |
 | page | `port/web/index.html`, `port/web/main.js` |
 | stubs | `port/src/web/webstubs.c` (crash handler, update check) |
+| sidecar converters (C) | `port/src/convert/geconv.{c,h}`; page glue `port/src/web/geconvweb.c`; inputs `scripts/web/gen_geconv_inputs.py` → `build-web/geconv_inputs.c`; native-style check tool `tools_web/geconv_cli.c` |
+| template + fill | build: `tools_web/romfill.c` via `scripts/web/romfill.sh`; boot: `port/src/web/romfill.c`; checks `scripts/web/fillcheck.py` |
+| deploy gate | `tools_web/romscan.c`, `tools_web/romscan_attr.py`, `scripts/web/romscan.{sh,allow}`, `scripts/web/deploy_check.sh` |
+
+## Traps found in G4
+- Sourcing `env.sh` from zsh: `BASH_SOURCE` is empty, GE_ROOT became `$HOME` and the whole home
+  directory was bind-mounted into the dev container (suspected cause of repeated Docker Desktop
+  crashes). env.sh now refuses non-bash shells and non-repo roots; call scripts with `bash`.
+- `MEMORY64=2`: exported functions with pointer parameters get BigInts in JS; give page-facing
+  exports `uint32_t` address parameters and a `ge_web_alloc`/`ge_web_free` pair instead of
+  `_malloc`; `Module.HEAPU8` must be in `EXPORTED_RUNTIME_METHODS`.
+- Emscripten under node does not pass the host environment to `getenv` (use argv in tools).
+- The final wasm's DWARF is unusable after wasm-opt/asyncify ("unsupported version"); use the wasm-ld
+  map (`-Wl,-Map`) for symbol addresses and the data section for initial bytes.
+- wasm-opt splits data segments around zero gaps: a symbol can span several segments; work on a
+  reconstructed memory image, not per segment.
+- Do not fill (or CRC-check) data that runs before the fill: port `.data` is changed by C
+  constructors before `onRuntimeInitialized`; the fill only touches decomp/asset data and port
+  read-only tables.
+- The Dam intro camera is chosen by `randomGetNext()` after the RNG has advanced every frame
+  (seeded from the clock), so screenshots of the intro differ between runs even with `GE_RSEED`;
+  compare gameplay frames, not intro cuts.
 
 ## Traps found in G1
 - clang crashes on `.set sym, CONST` in wasm assembly and wasm-ld has no `--defsym`: no absolute
@@ -133,7 +190,7 @@ After adding/changing code, if the build reports signature mismatches:
 - Gamepad, mouse (pointer lock) untested; no hidden-tab pause yet.
 - Det mode (`GE_DETERM`) not tried on the web; the route test uses wall-clock scripted pad timing
   (`GE_INPUTSCRIPT_MS=1`), generous gaps; a read-count script would be deterministic once det works.
-- 2.06 GiB initial memory (desktop only), dev sidecars via `?assets=` (W2).
+- 2.06 GiB initial memory (desktop only).
 
 ## Next session (G3) — recommended
 1. W2 is gated on the user's decision (recorded in PLAN 3.2, 2026-10-29); the user also still decides
@@ -143,3 +200,10 @@ After adding/changing code, if the build reports signature mismatches:
 2. Page polish needed for a real player: beforeunload fix, glad log silence, pointer lock on click,
    hidden-tab pause, gamepad check.
 3. Then W2 (C sidecar emitters in wasm, IndexedDB cache) per PLAN.
+
+## After G4 (ROM data) — recommended
+1. Struct-aware fill for the residual small fields (file_resource_table, PitemZ_entries,
+   c_item_entries, levelinfotable, MP weapon sets, model headers; ~5.7 KB) and game-TU strings in the
+   merged string pool, or a user decision that they count as "small constants" (ROMDATA.md section 6).
+2. Fill table keyed by (symbol, offset) and committed, so a stripped build does not need the ROM.
+3. Any deploy script must call `scripts/web/deploy_check.sh` first.

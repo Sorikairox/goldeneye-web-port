@@ -196,10 +196,21 @@ of 3.1 must go; class D: only the small constants stay — the W3 size audit dra
    object's N64 big-endian image (compile the same TU for a 32-bit BE target, or the decomp's map) in
    the EU ROM. Gate: the filled memory equals a dev build with the real initializers, byte for byte.
    `font_chardataj.c` is simply excluded from the EU web build.
-3. **Release gate "no ROM bytes in the site":** a check that scans `ge007.wasm`/`.js` for any >= 32-byte
-   run present in the EU ROM (raw and decompressed segments, both byte orders) and fails the deploy.
-Until 1.–3. land, dev builds load the Python sidecars through MEMFS (`?assets=` dev URL, local server
-only) and compile classes B–D as on native — **dev only, never deployed**.
+3. **Release gate "no ROM bytes in the site":** a check that scans `ge007.wasm`/`.js` for any >= 64-byte
+   run present in the EU ROM (raw and decompressed segments, both byte orders) and fails the deploy
+   (`scripts/web/deploy_check.sh`; the threshold the user set is 64 bytes).
+**Status (G4, 2026-10-30): 1.–3. landed** — details, numbers and the residual list in
+`docs/web/ROMDATA.md`. 1: `port/src/convert/geconv.c`, byte-identical to the Python output, run in the
+page before `main()`, IndexedDB cache. 2: done post-link instead of from the clang AST: the template is
+the linked wasm with every ROM-matching run of the decomp/asset data zeroed (`tools_web/romfill.c`:
+runs >= 16 B, display lists, anchored pieces incl. mixed-width fields; pointers never touched), the fill
+table holds offsets only, the page fills before `main()` and checks CRCs; byte-identical memory proven
+by an independent SHA-256 (`scripts/web/fillcheck.py` vs `&fillcheck`). Fonts / JP glyphs are not even
+linked (unreferenced). 3: `scripts/web/romscan.sh` (>= 64 B, raw + RZ streams, both swaps) inside
+`scripts/web/deploy_check.sh`: 178 runs / 58 KB before, 4 allowlisted third-party runs after. Left:
+~67 KB of short strings in the merged string pool (mostly non-game) and ~5.7 KB of small fields in a
+few game tables whose PC layout differs (struct-aware fill = next step). `?assets=` stays a dev-only
+override; a stripped build needs the dev ROM at build time.
 
 ---
 
@@ -209,8 +220,8 @@ only) and compile classes B–D as on native — **dev only, never deployed**.
 |---|---|---|
 | W0 (G1, done) | toolchain in Docker, scripts, first wasm build | Nintendo + Rareware logos render in headless Chrome from the EU ROM |
 | W1 | boot to the title / intro and the main menu | fix the stall after the Rareware logo (see HANDOFF), real-time pacing checked at 50 Hz, input works, no traps; first level (Dam) loads and renders |
-| W2 | in-browser sidecars | C emitters byte-identical to Python; IndexedDB cache; `?assets=` removed |
-| W3 | no ROM-derived data in the binary | template + fill for classes B–D; ROM-bytes scan gate green |
+| W2 (G4, done) | in-browser sidecars | C emitters byte-identical to Python; IndexedDB cache; `?assets=` dev-only |
+| W3 (G4, mostly done) | no ROM-derived data in the binary | template + fill for classes B–D; ROM-bytes scan gate green (residual small fields: ROMDATA.md) |
 | W4 | audio, saves, page | AudioWorklet output, EEPROM/ini in IndexedDB + export/import, ROM picker UX, pause on hidden tab, controls page |
 | W5 | full playthrough | every level loads (warp `-level_NN` equivalent `?level=`), golden-frame comparisons vs native Linux PAL frames |
 | W6 | deploy | private remote + Netlify site (user's decision), `PLAYING.md`, size/perf budget |

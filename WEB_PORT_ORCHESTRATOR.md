@@ -476,6 +476,21 @@ flash, controller pak).
     polls and parks the fiber; the game code stays as is. (GoldenEye G2)
 31. A page stuck in wasm never processes a late `Debugger.enable`: enable the debugger before navigating,
     then `Debugger.pause` returns the wasm stack of the stuck loop. (GoldenEye G2)
+32. "No ROM data in the binary" from a decomp: don't hand-write templates. Post-link, match every
+    run of the game's data symbols (wasm-ld map + data section) against the ROM and its decompressed
+    streams in both byte orders, zero the matches in the shipped wasm and fill them at boot from an
+    offsets-only table; pointers are never touched, so relocation stays as linked. Prove it with an
+    independent hash of the filled memory vs the original build, and scan the site (>= 64-byte runs)
+    as a deploy gate. (GoldenEye G4)
+33. Data the runtime touches before your boot-time fill (C constructors, library init) must not be
+    zeroed or CRC-checked: restrict the fill to the decomp's data and read-only port tables. (GoldenEye G4)
+34. Docker Desktop on macOS: never bind-mount more than the repo (a zsh-sourced bash script resolved
+    its root to `$HOME` and mounted all of it), keep build trees in named volumes, and serialise heavy
+    builds across sessions with a lock file; the VM's file sharing stalls and Docker dies otherwise.
+    (GoldenEye G3/G4)
+35. Converters ported from Python must reproduce Python's incidental orderings (dict insertion order,
+    stable sorts, last-write-wins maps, set iteration) to be byte-identical; port line by line, then
+    diff the outputs before trusting a single file. (GoldenEye G4)
 
 ---
 
