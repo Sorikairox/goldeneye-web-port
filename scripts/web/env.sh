@@ -4,7 +4,14 @@
 # The toolchain lives in Docker only (image goldeneye-emsdk, container goldeneye-dev with the repo
 # mounted at /src). Nothing is installed on the host.
 export PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH
-GE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+GE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)
+# Sourcing from zsh leaves BASH_SOURCE empty and used to resolve GE_ROOT to $HOME, which then got
+# bind-mounted whole into the container (suspected cause of the Docker Desktop file-sharing crashes,
+# G4 2026-10-30). Refuse anything that is not the repo.
+if [ ! -f "$GE_ROOT/CMakeLists.txt" ] || [ ! -f "$GE_ROOT/scripts/web/env.sh" ]; then
+  echo "env.sh: GE_ROOT=$GE_ROOT is not the repo; source me from bash (bash -c '. scripts/web/env.sh; ...')" >&2
+  return 1 2>/dev/null || exit 1
+fi
 GE_DEV=${GE_DEV:-goldeneye-dev}
 # The CMake build tree lives in a Docker named volume mounted at /build (one per dev container), not on the
 # bind-mounted repo: heavy build I/O on the macOS virtiofs share stalled Docker Desktop's file-event channel
