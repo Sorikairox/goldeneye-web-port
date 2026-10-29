@@ -267,8 +267,11 @@ static long nfills, capfills;
  * longest match wins (ties: nearest). The anchor then moves to that match, so pieces follow the
  * N64 layout locally even where the PC layout is wider. Acceptance: >= 4 bytes within the window,
  * 2-3 bytes within 16 of the prediction, 1 byte only exactly at it; once per symbol, when nothing
- * is found locally, a 64 KiB window re-anchors on a piece of 6+ bytes. Every accepted piece is exact
+ * is found locally, a 64 KiB window re-anchors on a piece of 6+ bytes. Mixed-width structs (s16
+ * pairs next to an f32 next to u8[4]) are matched as 4-byte units at 4-aligned stream offsets, each
+ * unit in its own byte order (>= 8 bytes, >= 2 non-zero units). Every accepted piece is exact
  * by construction (the bytes are equal); the self-check below proves the whole table. */
+static const char *g_debug;   /* -d SUBSTRING: trace pass 2 for matching symbols */
 static uint8_t *ptrmask;
 static uint8_t *fillmask;
 
@@ -368,103 +371,172 @@ static long pass_gfx(uint8_t *tmpl, long minrun)
     return total;
 }
 
+/* one candidate search: longest single-order match, or mixed-order 4-byte units, near pred */
+typedef struct { long len, src, dist, u0; int seg, mixed; int mord[64]; } Cand;
+
+static void search_single(int base, long pred, long win, long p, long end, Cand *best)
+{
+    for (int o = 0; o < 3; o++) {
+        int sg = sib(base, o, g_nbase);
+        Seg *g = &segs[sg];
+        long lo = pred - win < 0 ? 0 : pred - win, hi = pred + win > g->n ? g->n : pred + win;
+        for (long sp = lo; sp < hi; sp++) {
+            if (g->p[sp] != img[p]) continue;
+            long L = 0;
+            while (p + L < end && sp + L < g->n && !fillmask[p + L] && !ptrmask[p + L] && g->p[sp + L] == img[p + L]) L++;
+            while (L > 0 && !img[p + L - 1]) L--;   /* end on a non-zero byte */
+            long d = sp > pred ? sp - pred : pred - sp;
+            if (L > best->len || (L == best->len && d < best->dist)) {
+                best->len = L; best->src = sp; best->dist = d; best->seg = sg; best->mixed = 0; best->u0 = p;
+            }
+        }
+    }
+}
+
+static void search_mixed(int base, long pred, long win, long p, long fo, long end, Cand *best)
+{
+    long u0 = p - (long)((img_lo + p) & 3);
+    if (u0 < fo) return;
+    long upred = pred - (p - u0);
+    long lo = upred - win < 0 ? 0 : (upred - win) & ~3L, hi = upred + win;
+    for (long sp = lo; sp < hi; sp += 4) {
+        int ord[64];
+        long L = 0, nzu = 0;
+        while (L < 256 && u0 + L + 4 <= end) {
+            const uint8_t *x = img + u0 + L;
+            int clean = 1, hit = -1;
+            for (int k = 0; k < 4; k++) clean &= !fillmask[u0 + L + k] && !ptrmask[u0 + L + k];
+            if (!clean) break;
+            for (int o = 0; o < 3 && hit < 0; o++) {
+                Seg *g = &segs[sib(base, o, g_nbase)];
+                if (sp + L + 4 <= g->n && !memcmp(g->p + sp + L, x, 4)) hit = o;
+            }
+            if (hit < 0) break;
+            ord[L / 4] = hit;
+            nzu += (x[0] | x[1] | x[2] | x[3]) != 0;
+            L += 4;
+        }
+        while (L > 0 && !(img[u0 + L - 4] | img[u0 + L - 3] | img[u0 + L - 2] | img[u0 + L - 1])) L -= 4;
+        if (nzu < 2 || L < 8) continue;
+        long d = sp > upred ? sp - upred : upred - sp;
+        /* a mixed match counts from p, like a single one */
+        long Lp = L - (p - u0);
+        if (Lp > best->len || (Lp == best->len && d < best->dist)) {
+            best->len = Lp; best->src = sp; best->dist = d; best->seg = base; best->mixed = 1; best->u0 = u0;
+            memcpy(best->mord, ord, sizeof(int) * (L / 4));
+        }
+    }
+}
+
 static long pass2(uint8_t *tmpl, long minrun)
 {
     const long W = 1024, WW = 65536;
+    const char *dbg = g_debug;
     long imn = (long)(img_hi - img_lo), total = 0;
     fillmask = calloc(imn, 1);
     for (long i = 0; i < nfills; i++) memset(fillmask + (fills[i].dst - img_lo), 1, fills[i].len);
     total += pass_gfx(tmpl, minrun);
-    /* pass-1 fills by image offset: the anchor is updated when the walk passes one */
-    long *anchor_at = malloc(imn * sizeof(long));   /* fill index covering the byte, or -1 */
+    /* fills by image offset: the anchor follows them as the walk passes */
+    long *anchor_at = malloc(imn * sizeof(long));
     for (long i = 0; i < imn; i++) anchor_at[i] = -1;
     for (long i = 0; i < nfills; i++) for (uint32_t k = 0; k < fills[i].len; k++) anchor_at[fills[i].dst - img_lo + k] = i;
-    char curobj[160] = "";
-    int abase = -1;
-    long adelta = 0;   /* src offset - image offset */
+    /* most recently used streams with their last delta (src offset - image offset) */
+    enum { NMRU = 4 };
+    int mru[NMRU];
+    long mdel[NMRU];
+    int nmru = 0;
+#define USE(base, delta) do { int _b = (base); long _d = (delta), _i; \
+        for (_i = 0; _i < nmru && mru[_i] != _b; _i++); \
+        if (_i == nmru) { if (nmru < NMRU) nmru++; _i = nmru - 1; } \
+        for (; _i > 0; _i--) { mru[_i] = mru[_i - 1]; mdel[_i] = mdel[_i - 1]; } \
+        mru[0] = _b; mdel[0] = _d; } while (0)
     for (int si = 0; si < nsyms; si++) {
         Sym *sy = &syms[si];
         long fo = mem2img(sy->addr, sy->size);
         if (fo < 0 || sy->size <= 0) continue;
-        const char *c = strstr(sy->name, ":(");
-        size_t ol = c ? (size_t)(c - sy->name) : strlen(sy->name);
-        if (ol >= sizeof curobj || strncmp(curobj, sy->name, ol) || curobj[ol]) {
-            memcpy(curobj, sy->name, ol < sizeof curobj ? ol : sizeof curobj - 1);
-            curobj[ol < sizeof curobj ? ol : sizeof curobj - 1] = 0;
-            abase = -1;
-            /* first anchor of a new object: its first pass-1 fill */
-            for (int sj = si; sj < nsyms && abase < 0; sj++) {
-                if (strncmp(syms[sj].name, curobj, ol)) break;
-                long fj = mem2img(syms[sj].addr, syms[sj].size);
-                if (fj < 0) continue;
-                for (long k = fj; k < fj + syms[sj].size; k++)
-                    if (anchor_at[k] >= 0) {
-                        Fill *f = &fills[anchor_at[k]];
-                        for (int q = 0; q < nsegs; q++)
-                            if (segs[q].rom_off == f->rom_off && segs[q].kind == f->kind && segs[q].order == 0) { abase = q; break; }
-                        adelta = (long)f->src_off - (long)(f->dst - img_lo);
-                        break;
-                    }
-            }
-        }
-        if (abase < 0) {   /* object without any fill yet: anchor on an 8-byte block found anywhere */
-            for (long k = fo; k + BLK <= fo + sy->size && abase < 0; k++) {
+        long end = fo + sy->size;
+        if (!nmru) {   /* nothing yet: anchor on an 8-byte block found anywhere */
+            for (long k = fo; k + BLK <= end && !nmru; k++) {
                 int nzc = 0, clean = 1;
                 for (int b = 0; b < BLK; b++) { nzc += img[k + b] != 0; clean &= !ptrmask[k + b] && !fillmask[k + b]; }
                 if (nzc < 4 || !clean) continue;
                 uint64_t h = hblock(img + k);
                 for (uint64_t i = (h * 0x9E3779B97F4A7C15ULL) & tabmask; tab[i].seg >= 0; i = (i + 1) & tabmask) {
                     if (tab[i].h != h || memcmp(segs[tab[i].seg].p + tab[i].off, img + k, BLK)) continue;
-                    abase = base_of(tab[i].seg);
-                    adelta = (long)tab[i].off - k;
+                    USE(base_of(tab[i].seg), (long)tab[i].off - k);
                     break;
                 }
             }
         }
-        long end = fo + sy->size;
+        if (dbg && strstr(sy->name, dbg)) {
+            fprintf(stderr, "dbg sym %s mru %d:", sy->name, nmru);
+            for (long k = fo; k < end; k++) fprintf(stderr, " %02x%s%s", img[k], fillmask[k] ? "f" : "", ptrmask[k] ? "p" : "");
+            fprintf(stderr, "\n");
+        }
         int wide = 0;
         for (long p = fo; p < end;) {
-            if (anchor_at[p] >= 0) {   /* passing a pass-1 fill: re-anchor */
+            if (anchor_at[p] >= 0) {
                 Fill *f = &fills[anchor_at[p]];
-                for (int q = 0; q < nsegs; q++)
-                    if (segs[q].rom_off == f->rom_off && segs[q].kind == f->kind && segs[q].order == 0) { abase = q; break; }
-                adelta = (long)f->src_off - (long)(f->dst - img_lo);
+                for (int q = 0; q < g_nbase; q++)
+                    if (segs[q].rom_off == f->rom_off && segs[q].kind == f->kind) { USE(q, (long)f->src_off - (long)(f->dst - img_lo)); break; }
                 p = (long)(f->dst - img_lo) + f->len;
                 continue;
             }
-            if (fillmask[p] || !img[p] || ptrmask[p] || abase < 0) { p++; continue; }
-            long pred = p + adelta, best_len = 0, best_src = 0, best_dist = 0;
-            int best_seg = -1;
-            /* once per symbol, when the local window finds nothing: a wide re-anchor (6+ bytes) */
-            long win = W;
-            if (wide == 1) win = WW;
-            for (int o = 0; o < 3; o++) {
-                int sg = sib(abase, o, g_nbase);
-                Seg *g = &segs[sg];
-                long lo = pred - win < 0 ? 0 : pred - win, hi = pred + win > g->n ? g->n : pred + win;
-                for (long sp = lo; sp < hi; sp++) {
-                    if (g->p[sp] != img[p]) continue;
-                    long L = 0;
-                    while (p + L < end && sp + L < g->n && !fillmask[p + L] && !ptrmask[p + L] && g->p[sp + L] == img[p + L]) L++;
-                    long d = sp > pred ? sp - pred : pred - sp;
-                    if (L > best_len || (L == best_len && d < best_dist)) { best_len = L; best_src = sp; best_dist = d; best_seg = sg; }
-                }
+            if (fillmask[p] || !img[p] || ptrmask[p] || !nmru) { p++; continue; }
+            Cand best;
+            memset(&best, 0, sizeof best);
+            best.seg = -1;
+            int bm = 0;
+            for (int m = 0; m < nmru; m++) {
+                Cand c;
+                memset(&c, 0, sizeof c);
+                c.seg = -1;
+                long win = wide == 1 && m == 0 ? WW : W;
+                search_single(mru[m], p + mdel[m], win, p, end, &c);
+                search_mixed(mru[m], p + mdel[m], win, p, fo, end, &c);
+                if (c.seg >= 0 && (c.len > best.len || (c.len == best.len && c.dist < best.dist))) { best = c; bm = m; }
             }
-            /* trailing zero bytes add nothing; keep the piece ending on a non-zero byte */
-            while (best_len > 0 && !img[p + best_len - 1]) best_len--;
-            int ok = best_seg >= 0 && ((best_len >= 4) || (best_len >= 2 && best_dist <= 16) || (best_len == 1 && best_dist == 0));
-            if (wide == 1) { ok = best_seg >= 0 && best_len >= 6; wide = 2; }
-            else if (!ok && !wide && best_len < 6) { wide = 1; continue; }   /* retry this byte wide */
+            int ok;
+            if (wide == 1) { ok = best.seg >= 0 && best.len >= 6; wide = 2; }
+            else ok = best.seg >= 0 && (best.len >= 4 || (best.len >= 2 && best.dist <= 16) || (best.len == 1 && best.dist == 0));
+            if (dbg && strstr(sy->name, dbg))
+                fprintf(stderr, "dbg %s +%ld: best %ld@%#lx d%ld mixed %d mru#%d ok %d wide %d\n", sy->name, p - fo, best.len,
+                        best.src, best.dist, best.mixed, bm, ok, wide);
+            if (!ok && !wide && best.len < 6) { wide = 1; continue; }   /* retry this byte with a wide window */
             if (!ok) { p++; continue; }
-            add_fill(tmpl, p, best_len, best_seg, best_src);
-            total += best_len;
-            abase = base_of(best_seg);
-            adelta = best_src - p;
-            p += best_len;
+            int base = best.mixed ? best.seg : base_of(best.seg);
+            if (!best.mixed) {
+                add_fill(tmpl, p, best.len, best.seg, best.src);
+                total += best.len;
+                USE(base, best.src - p);
+                p += best.len;
+            } else {
+                long u0 = best.u0, mlen = best.len + (p - u0);
+                for (long u = 0; u < mlen; u += 4) {
+                    if (!(img[u0 + u] | img[u0 + u + 1] | img[u0 + u + 2] | img[u0 + u + 3])) continue;
+                    long v = u + 4;
+                    while (v < mlen && best.mord[v / 4] == best.mord[u / 4] &&
+                           (img[u0 + v] | img[u0 + v + 1] | img[u0 + v + 2] | img[u0 + v + 3])) v += 4;
+                    add_fill(tmpl, u0 + u, v - u, sib(base, best.mord[u / 4], g_nbase), best.src + u);
+                    total += v - u;
+                    u = v - 4;
+                }
+                USE(base, best.src - u0);
+                p = u0 + mlen;
+            }
         }
     }
+#undef USE
     free(anchor_at);
     return total;
+}
+
+static int cmp_fill(const void *a, const void *b)
+{
+    const Fill *x = a, *y = b;
+    if (x->kind != y->kind) return x->kind - y->kind;
+    if (x->rom_off != y->rom_off) return x->rom_off < y->rom_off ? -1 : 1;
+    return x->dst < y->dst ? -1 : x->dst > y->dst;
 }
 
 static void put32(FILE *f, uint32_t v) { uint8_t b[4] = { v, v >> 8, v >> 16, v >> 24 }; fwrite(b, 1, 4, f); }
@@ -473,7 +545,11 @@ int main(int argc, char **argv)
 {
     long minrun = 16;
     int a = 1;
-    if (a + 1 < argc && !strcmp(argv[a], "-m")) { minrun = atol(argv[a + 1]); a += 2; }
+    for (;;) {
+        if (a + 1 < argc && !strcmp(argv[a], "-m")) { minrun = atol(argv[a + 1]); a += 2; }
+        else if (a + 1 < argc && !strcmp(argv[a], "-d")) { g_debug = argv[a + 1]; a += 2; }
+        else break;
+    }
     if (argc - a != 6) {
         fprintf(stderr, "usage: romfill [-m MINRUN] ROM IN.wasm LINK.map OUT.wasm OUT.romfill REPORT.tsv\n");
         return 2;
@@ -594,6 +670,8 @@ int main(int argc, char **argv)
            "left: %ld pointer-like bytes, %ld other non-zero bytes\n", minrun, npass1, fill1, nfills - npass1, fill2,
            tot_ptr, tot_res);
 
+    /* group the entries by source stream (the page inflates each RZ stream once) */
+    qsort(fills, nfills, sizeof(Fill), cmp_fill);
     /* self-check: apply the table to the template, compare with the original */
     uint8_t *sim = malloc(imn);
     memcpy(sim, tmpl, imn);
