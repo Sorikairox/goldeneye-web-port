@@ -23,6 +23,39 @@
 
 static SDL_AudioDeviceID dev = 0;
 
+#if defined(GE_WEB)
+/* Web: output through an AudioWorklet (port/src/web/webaudio.c) instead of SDL's deprecated
+ * ScriptProcessor, unless GE_SDLAUDIO is set or AudioWorklet is missing. The device calls this file
+ * makes are routed there; `dev` is a placeholder id while the worklet is in use. */
+extern int webAudioOpen(int srcRate);
+extern void webAudioQueue(const void *buf, uint32_t len);
+extern uint32_t webAudioQueuedBytes(void);
+extern void webAudioPause(int paused);
+static int s_webAudio;
+static int webSDL_QueueAudio(SDL_AudioDeviceID d, const void *b, Uint32 l)
+{ if (s_webAudio) { webAudioQueue(b, l); return 0; } return SDL_QueueAudio(d, b, l); }
+static Uint32 webSDL_GetQueuedAudioSize(SDL_AudioDeviceID d)
+{ return s_webAudio ? webAudioQueuedBytes() : SDL_GetQueuedAudioSize(d); }
+static void webSDL_PauseAudioDevice(SDL_AudioDeviceID d, int p)
+{ if (s_webAudio) webAudioPause(p); else SDL_PauseAudioDevice(d, p); }
+static void webSDL_CloseAudioDevice(SDL_AudioDeviceID d)
+{ if (!s_webAudio) SDL_CloseAudioDevice(d); }
+static SDL_AudioDeviceID webSDL_OpenAudioDevice(const char *n, int c, const SDL_AudioSpec *w, SDL_AudioSpec *h, int f)
+{
+    if (!getenv("GE_SDLAUDIO") && webAudioOpen(w->freq) > 0) {
+        s_webAudio = 1;
+        *h = *w;
+        return 1;
+    }
+    return SDL_OpenAudioDevice(n, c, w, h, f);
+}
+#define SDL_QueueAudio webSDL_QueueAudio
+#define SDL_GetQueuedAudioSize webSDL_GetQueuedAudioSize
+#define SDL_PauseAudioDevice webSDL_PauseAudioDevice
+#define SDL_CloseAudioDevice webSDL_CloseAudioDevice
+#define SDL_OpenAudioDevice webSDL_OpenAudioDevice
+#endif
+
 /* D470: port-level master volume (0..100, 100 = bit-identical passthrough)
  * and output-device selection (empty = SDL's default device, the old
  * behaviour). Both are plain config-backed values read where they are used. */
