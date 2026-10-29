@@ -9,12 +9,26 @@ const [url, secs = '20', outdir = 'port_work/shots', every = '5'] = process.argv
 if (!url) { console.error('usage: probe.mjs URL [seconds] [outdir] [shotEvery]'); process.exit(2); }
 const CH = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 fs.mkdirSync(outdir, { recursive: true });
+// ONE probe Chrome at a time across all sessions/worktrees: /tmp/goldeneye-chrome.lock holds the PID of the
+// probe that owns the running Chrome. Wait while a live process holds it; a dead PID is a stale lock.
+const LOCK = '/tmp/goldeneye-chrome.lock';
+for (let waited = 0; ; waited++) {
+  try { fs.writeFileSync(LOCK, String(process.pid), { flag: 'wx' }); break; } catch (e) {}
+  let holder = 0; try { holder = +fs.readFileSync(LOCK, 'utf8').trim(); } catch (e) { continue; }
+  let alive = false; try { process.kill(holder, 0); alive = true; } catch (e) { alive = e.code === 'EPERM'; }
+  if (!alive) { try { fs.unlinkSync(LOCK); } catch (e) {} continue; }
+  if (waited % 30 === 0) console.log(`probe: waiting for the Chrome lock (held by PID ${holder})`);
+  await new Promise((r) => setTimeout(r, 2000));
+}
+const unlock = () => { try { if (fs.readFileSync(LOCK, 'utf8').trim() === String(process.pid)) fs.unlinkSync(LOCK); } catch (e) {} };
+process.on('exit', unlock);
 const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'ge-probe-'));
 const port = 9400 + (process.pid % 400);
 const ch = spawn(CH, ['--headless=new', `--user-data-dir=${prof}`, `--remote-debugging-port=${port}`,
   '--mute-audio', '--autoplay-policy=no-user-gesture-required', `--use-angle=${process.env.PROBE_ANGLE || 'swiftshader'}`, '--enable-unsafe-swiftshader',
   '--window-size=800,900', 'about:blank'], { stdio: 'ignore' });
 const done = (code) => { try { ch.kill('SIGKILL'); } catch (e) {} try { fs.rmSync(prof, { recursive: true, force: true }); } catch (e) {} process.exit(code); };
+for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => done(130));
 // the console is streamed to <outdir>/console.log as it arrives (with seconds since navigation), so a
 // hung page still leaves its last lines behind
 const lines = [];
