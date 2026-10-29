@@ -15,7 +15,9 @@ keeps diagnostics pointing at the original. Semantics are identical.
 3. --fn NAME=PROTO: a function the TU declares as data (`extern s32 NAME;`) only to take
    its address. wasm links functions and data separately (and a function's address is a
    table index), so the declaration becomes the given function prototype; `&NAME` then
-   is the real function pointer, as it is on native.
+   is the real function pointer, as it is on native. If PROTO names a different function,
+   every use of NAME in the TU is renamed to it (a port-side adapter with the type the
+   caller of the pointer expects, e.g. ge_web_vertex_allocator in port/src/web/webstubs.c).
 
 usage: web_srcfix.py SRC.c OUT.c [--abs NAME=ADDR | --fn NAME=PROTO ...]
 """
@@ -63,6 +65,10 @@ for name, proto in fns.items():
             done = True
     if not done:
         sys.exit("web_srcfix: no `extern T %s;` in %s" % (name, src))
+    new = re.search(r"(\w+)\s*\(", proto).group(1)
+    if new != name:
+        lines = [l if l.startswith("extern %s;" % proto) else re.sub(r"\b%s\b" % re.escape(name), new, l)
+                 for l in lines]
 
 open(dst, "w", encoding="utf-8", errors="surrogateescape").write(
     '#line 1 "%s"\n' % src + "\n".join(lines))

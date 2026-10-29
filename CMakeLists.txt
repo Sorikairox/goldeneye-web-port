@@ -555,7 +555,7 @@ if(EMSCRIPTEN)
   set(_SRCFIX_spectrum    "")
   set(_SRCFIX_initanitable --abs "animations_frame_buffer=0x80000000UL+0x7FFD30")
   set(_SRCFIX_initweaponanigroups --fn
-      "get_ptr_allocated_block_for_vertices=void get_ptr_allocated_block_for_vertices(int)")
+      "get_ptr_allocated_block_for_vertices=void *ge_web_vertex_allocator(int)")
   foreach(_pwb lv spectrum initanitable initweaponanigroups)
     set(_pwo "${CMAKE_BINARY_DIR}/srcfix/${_pwb}.c")
     add_custom_command(OUTPUT "${_pwo}"
