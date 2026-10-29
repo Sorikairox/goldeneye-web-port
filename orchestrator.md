@@ -4,24 +4,30 @@ Playbook: `WEB_PORT_ORCHESTRATOR.md` (lessons from the Conker web port). This fi
 it, don't append history) and the rules specific to this repo. Session history: `docs/web/HANDOFF.md` and
 `docs/web/sessions.tsv`.
 
-## 1. Status snapshot (2026-10-29, after G2)
+## 1. Status snapshot (2026-10-30, after G3 + G4)
 
 - **Goal:** GoldenEye 007 running in a web browser (WebAssembly), from readable C, for a player who owns the
   **EU (PAL) ROM**. Later: features (each optional) and online multiplayer, as in the Conker port.
 - **Base:** this repo is a clone of `jkdansereau/goldeneye-pc-port` (MIT; a native PC port of the n64decomp/007
   decompilation, SDL2 + OpenGL 3, NTSC-U in releases, PAL/JP "convert, build and boot from source" per its
   ROADMAP D258/D487/D488). Remote `upstream` is fetch-only (push URL disabled). Our work is on branch `web`.
-- **Web port state (G2):** `docs/web/PLAN.md` (decisions: C compiled as wasm64 = LP64 like the native
-  port, lowered to wasm32 with `-sMEMORY64=2`; cart window at 0x10000000, single-view DRAM at 0x80000000;
-  libultra threads as fibers driven by rAF at 50 Hz; ROM-derived data audit and the template + fill /
-  C-emitter plan). The Emscripten build runs in headless Chrome **from power-on through the intro, title
-  and menus into Dam gameplay** by the real route (`scripts/web/route_dam.sh`), 50 retraces/s and 50 game
-  frames/s in real time, Web Audio non-silent, keyboard works. G1's hang was SDL2's `emscripten_sleep`
-  inside a fiber plus a `music.c` busy-wait (fixed port-side). Sidecars are still the dev Python output
-  loaded via a dev URL (never deploy this). How to build/run/test: `docs/web/HANDOFF.md`.
+- **Web port state:** `docs/web/PLAN.md` (decisions: C compiled as wasm64 = LP64 like the native port,
+  lowered to wasm32 with `-sMEMORY64=2`; cart window at 0x10000000, single-view DRAM at 0x80000000;
+  libultra threads as fibers driven by rAF at 50 Hz). In headless Chrome: the real route power-on ->
+  menus -> Dam; **all 20 solo missions + the ending load and play by warp** (50 retraces/s, no traps;
+  start views match the native Linux golden frames), **split-screen 2-4 players on all 11 arenas**
+  (`docs/web/LEVELS.md`). Page: AudioWorklet audio, hidden-tab pause, clean unload, Gamepad API pad
+  works (fake pad); pointer lock / real pads / audio by ear need a human. G4: sidecars converted in the
+  browser (C port of the converters, IndexedDB cache) and ROM data stripped from the wasm (template +
+  fill at boot, `deploy_check.sh` gate). Open: Egypt / MP dark-or-grey surfaces (native reference
+  needed), saves persistence (W4). How to build/run/test: `docs/web/HANDOFF.md`.
 - **EU-only:** confirmed — the PAL build, the sidecar converters and the game need only the EU ROM.
 - **Tooling:** Docker images `goldeneye-emsdk`, `goldeneye-linux-amd64` (native reference build), containers
-  `goldeneye-dev` (build), `goldeneye-web-serve` (127.0.0.1 only), `goldeneye-linux` (stopped when idle); scripts in `scripts/web/`; screenshots in gitignored `port_work/`.
+  `goldeneye-dev` (build, `--cpus=4`, build tree in volume `goldeneye-dev-build`), `goldeneye-web-serve`
+  (127.0.0.1 only), `goldeneye-linux` (stopped when idle); a second session uses its own (`GE_DEV`,
+  `GE_SERVE`). Shared locks: `/tmp/goldeneye-build.lock`, `/tmp/goldeneye-chrome.lock`. `env.sh` from
+  bash only (a zsh-sourced run mounted `$HOME` and crashed Docker Desktop). Scripts in `scripts/web/`;
+  screenshots in gitignored `port_work/`.
 - **Reference:** the decompilation itself is cloned at `~/goldeneye-ref/007` (read-only reference).
 - **ROM:** `~/roms/GoldenEye_007_Europe.z64`, read-only, SHA-1 `167c3c433dec1f1eb921736f7d53fac8cb45ee31`
   (= the decomp's `ge007.e.sha1`). Dev copy: `data/ge007.pal-final.z64` (gitignored); never modify the original.

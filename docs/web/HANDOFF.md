@@ -3,7 +3,31 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G2, 2026-10-29)
+## Current state (after G3, 2026-10-30)
+
+G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
+- **All 20 solo missions and the ending (Cuba) load, render and play** by warp (`-level_XX`, Agent):
+  no trap, no stall, 50.0 retraces/s and 50 game frames/s after the load, in three sweeps
+  (`scripts/web/level_sweep.sh`). The start view of every level matches upstream's native Linux golden
+  frames by eye (`port_work/g3/compare12b.png`, left native, right web) after the WebGL-extension fix
+  below. Open: Egypt, a pillar near the camera sometimes renders almost black (not reproducible run to
+  run; room pool, near clip, fog mode and GL backend ruled out, see LEVELS.md).
+- **Split-screen works** (2, 3, 4 players, all 11 arenas, scripted pad per seat through the port's
+  `GE_STARTMP` harness, `scripts/web/mp_sweep.sh`): no trap, 50 retraces/s. Open: in some views large
+  wall areas render uniformly black or flat light grey (the 2P sky grey) in Temple / Library; same
+  family as the Egypt item, unconfirmed against native.
+- **Page:** unload without the MEMORY64=2 BigInt exception (config written on unload), hidden-tab pause
+  (scheduler, console clock and audio stop; resume continues from the same frame), one GL log line
+  instead of ~90, audio through an AudioWorklet (non-silent, 48 kHz context), Gamepad API pad works
+  (fake pad in headless Chrome: SDL opens it, A/stick/trigger drive Bond). Pointer lock and real
+  gamepads need a human (headless Chrome refuses pointer lock: "WrongDocumentError").
+- **Fidelity fix:** WebGL2 extensions for the native renderer's features (noperspective shade for the
+  sky/water horizon fades, depth clamp, mirror clamp) + highp shaders. Frigate's water and Surface's sky
+  were visibly wrong before.
+- **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
+  rules now in the scripts: see "Traps found in G3".
+
+## State after G2 (2026-10-29)
 
 - **The game runs in headless Chrome from power-on into Dam by the real route**: Nintendo/Rareware
   logos, gun-barrel intro + attract demos, GoldenEye title, file select, mission select, difficulty,
@@ -40,8 +64,12 @@ port-side `ge_web_vertex_allocator` installed via the build copy of initweaponan
 ## How to build, run, test
 
 All tools run in Docker (`export PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH`, done by
-`scripts/web/env.sh`). Image `goldeneye-emsdk` (built from `scripts/web/Dockerfile.emsdk`), dev container
-`goldeneye-dev` (repo at `/src`), server container `goldeneye-web-serve`.
+`scripts/web/env.sh`, bash only). Image `goldeneye-emsdk` (built from `scripts/web/Dockerfile.emsdk`), dev
+container `goldeneye-dev` (repo at `/src`, `--cpus=4`, CMake build tree in the named volume
+`goldeneye-dev-build` at `/build/web`; build.sh copies `ge007.{js,wasm}`, `cmake.log`, `build.log` to
+`build-web/`), server container `goldeneye-web-serve` (or `node scripts/web/serve_node.mjs` without
+Docker). Locks shared by all sessions: `/tmp/goldeneye-build.lock` (build.sh), `/tmp/goldeneye-chrome.lock`
+(probe.mjs).
 
 ```sh
 # one-time: dev ROM copy + EU sidecars (gitignored data/)
@@ -62,12 +90,23 @@ always), `GE_INPUTSCRIPT=...` (+ `GE_INPUTSCRIPT_MS=1`) scripted pad (syntax in 
 Probe env: `PROBE_DEBUG=1` (debugger on before navigation: a stuck main thread then gives its wasm stack
 — this found bug 2), `PROBE_PROFILE=<s>`, `PROBE_KEYS="24:KeyD:1,28:KeyW:3"` (real key events),
 `PROBE_EVAL="$(cat scripts/web/audiocheck.js)"`, `PROBE_ANGLE=metal` (real GPU), `PROBE_FULL=1`
-(whole page instead of the canvas), `PROBE_SCALE`. Every run writes `console.log` (streamed, timestamps)
+(whole page instead of the canvas), `PROBE_SCALE`, `PROBE_CLICKS="20:150"` (trusted canvas click held
+150 ms), `PROBE_EVALS="14:Module._webPageSetHidden(1)|17:..."` (timed evaluations, results in
+console.log), `PROBE_PRELOAD="$(cat scripts/web/fakepad.js)"` (fake Gamepad API pad, drive it with
+`__pad.press(0,200)` / `__pad.axis(1,-1,2000)` from PROBE_EVALS). Every run writes `console.log` (streamed, timestamps)
 and `sheet.png` (contact sheet) into its outdir.
 
 ```sh
 scripts/web/route_dam.sh [secs=75] [outdir=port_work/route-dam]   # real route to Dam + walk/fire; look at sheet.png
+scripts/web/level_sweep.sh [33:dam ...]   # warp sweep, default 20 missions + Cuba + MP stages; port_work/sweep/summary.tsv
+scripts/web/mp_sweep.sh [2,1:temple ...]  # split-screen sweep (GE_STARTMP), default 11 arenas 2P + 3P/4P
+#   both: SECS, EVERY, OUT, GE_EXTRA_PARAMS='&env=GE_RSEED=0x0123456789abcdef', PROBE_ANGLE=metal,
+#   SWEEP_DEV_ASSETS=1 (Python sidecars instead of the in-page conversion)
 ```
+Fidelity check: put the 12 s sweep shots next to `tools_pc/golden/<level>/linux/` (G3 did it with a
+throw-away page in `port_work/g3/`; the start view after the B intro-skip matches the native stems).
+`&env=GE_SDLAUDIO=1` = SDL's ScriptProcessor instead of the AudioWorklet; `Module._webPageSetHidden(1/0)`
+= hidden-tab pause test hook.
 Native Linux reference build (amd64, emulated; compiles/links, does not run under emulation):
 `docker build --platform linux/amd64 -t goldeneye-linux-amd64 -f scripts/web/Dockerfile.linux scripts/web`,
 then in container `goldeneye-linux`: `cmake -S . -B build-linux -G Ninja -DROMID=pal-final && ninja -C build-linux`.
@@ -77,7 +116,7 @@ Release build: `ge_exec bash -c "emcmake cmake -S . -B build-web -DCMAKE_BUILD_T
 `build.sh` re-runs CMake every time (new files are globbed).
 
 After adding/changing code, if the build reports signature mismatches:
-`ge_exec python3 scripts/web/sigadapt.py scan build-web/build.log build-web`, review the new rows in
+`ge_exec python3 scripts/web/sigadapt.py scan /build/web/build.log /build/web`, review the new rows in
 `scripts/web/sigadapt.tsv` (note column), rebuild.
 
 ## ROM data from the player's ROM (G4, 2026-10-30)
@@ -127,6 +166,9 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
 | call adapters | `scripts/web/sigadapt.py`, `scripts/web/sigadapt.tsv` → `build-web/sigadapt.c` |
 | page | `port/web/index.html`, `port/web/main.js` |
 | stubs | `port/src/web/webstubs.c` (crash handler, update check) |
+| page integration (C) | `port/src/web/webpage.c` (beforeunload, hidden-tab pause), `port/src/web/webaudio.c` (AudioWorklet output; routed from `port/src/audio.c`) |
+| WebGL specifics | `port/fast3d/gfx_opengl.cpp` (`__EMSCRIPTEN__`: extensions, highp, GL log summary) |
+| test scripts | `scripts/web/{level_sweep,mp_sweep,route_dam}.sh`, `probe.mjs`, `fakepad.js`, `audiocheck.js` |
 | sidecar converters (C) | `port/src/convert/geconv.{c,h}`; page glue `port/src/web/geconvweb.c`; inputs `scripts/web/gen_geconv_inputs.py` → `build-web/geconv_inputs.c`; native-style check tool `tools_web/geconv_cli.c` |
 | template + fill | build: `tools_web/romfill.c` via `scripts/web/romfill.sh`; boot: `port/src/web/romfill.c`; checks `scripts/web/fillcheck.py` |
 | deploy gate | `tools_web/romscan.c`, `tools_web/romscan_attr.py`, `scripts/web/romscan.{sh,allow}`, `scripts/web/deploy_check.sh` |
@@ -182,24 +224,51 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
 - Emscripten glue bug with `-sMEMORY64=2`: the `beforeunload` handler mixes BigInt and Number
   (`UTF8ToString` of SDL's returned pointer), an exception at page unload. Harmless so far (open).
 
-## Open problems
-- `beforeunload` BigInt exception at page close (above): SDL then never sees `SDL_APP_TERMINATING`;
-  matters once saves/config are written on quit (W4). Fix: override the callback or patch the glue.
-- glad logs ~150 "could not find function" lines (desktop-only GL entry points) at start: silence.
-- `ScriptProcessorNode` deprecated: AudioWorklet in W4; audio by ear unverified.
-- Gamepad, mouse (pointer lock) untested; no hidden-tab pause yet.
-- Det mode (`GE_DETERM`) not tried on the web; the route test uses wall-clock scripted pad timing
-  (`GE_INPUTSCRIPT_MS=1`), generous gaps; a read-count script would be deterministic once det works.
-- 2.06 GiB initial memory (desktop only).
+## Traps found in G3
+- fast3d picks features from desktop-GL capabilities; on WebGL2 it silently took every fallback
+  (perspective shade instead of the RDP's affine shade, no depth clamp, mirrored-repeat instead of
+  mirror clamp): the sky/water horizon fades looked wrong. WebGL extensions must also be *enabled*
+  per context (`emscripten_webgl_enable_extension`) before glad can use them. Compare against native
+  frames (`tools_pc/golden/*/linux`) early: the start view of every level is a cheap fidelity test.
+- `-sMEMORY64=2` glue: a C callback returning a pointer to JS (SDL's beforeunload returns `""`) arrives
+  as a BigInt; `UTF8ToString(BigInt)` throws. Replace such callbacks or return NULL.
+- `<emscripten/html5.h>` includes `pthread.h`, which reaches the port's `sched.h` shim and the game
+  headers (`typedef s32 bool` vs `<stdbool.h>`): declare the one html5 call locally in port files.
+- In the port's default control style the stick's Y axis looks up/down; scripted walking needs
+  `CUPHOLD`/`CNONE`. A pulses during an intro skip also cycle the weapon once gameplay starts (B is
+  safe). Look at the screenshots: a "bug" in sweep 1 was Bond throwing a grenade into his own lift.
+- Headless Chrome cannot take pointer lock ("WrongDocumentError"); a fake Gamepad API pad
+  (`scripts/web/fakepad.js` via `PROBE_PRELOAD`) does reach SDL.
+- Docker Desktop (macOS) died four times in one evening ("service fs failed: injecting event blocked
+  for 60s"): a dev container had all of `$HOME` bind-mounted (env.sh sourced from zsh, found by G4).
+  Now: env.sh refuses zsh and a non-repo root and recreates a container whose /src is not the repo;
+  build trees in a named volume (`$GE_DEV-build` at /build); `--cpus=4` + `ninja -j4`; one build at a
+  time (`/tmp/goldeneye-build.lock`) and one probe Chrome at a time (`/tmp/goldeneye-chrome.lock`,
+  probe.mjs takes it). `scripts/web/serve_node.mjs` serves the site without Docker.
 
-## Next session (G3) — recommended
-1. W2 is gated on the user's decision (recorded in PLAN 3.2, 2026-10-29); the user also still decides
-   hosting. Before W2: a broader runtime sweep with `-level_XX` warps over all 20 solo levels (screenshot
-   + `pacing:` + no EXCEPTION each; a `scripts/web/level_sweep.sh`), fix traps found (expect more
-   indirect-call signature mismatches and busy-waits; tools above).
-2. Page polish needed for a real player: beforeunload fix, glad log silence, pointer lock on click,
-   hidden-tab pause, gamepad check.
-3. Then W2 (C sidecar emitters in wasm, IndexedDB cache) per PLAN.
+## Open problems
+- Egypt dark pillar / MP black or grey wall areas (LEVELS.md): needs a native reference at the same
+  spot. Ruled out on the web side: room-model pool (`GE_D104`: 0 FAIL / SKIP), CPU near clip
+  (`GE_NEARCLIP=0`), fog mode (`GE_FOGPIXEL=1`), GL backend (SwiftShader and Metal).
+- Pointer lock (mouse aim) and real gamepads/rumble: need a human in a real browser. SDL requests the
+  lock in its mousedown handler once the game has turned relative mode on (port click-to-lock), so the
+  first click arms and the lock may only come with the second click; check that.
+- Audio not listened to by ear (headless, muted); AudioWorklet resampler is linear.
+- Det mode (`GE_DETERM`) not tried on the web; sweeps are wall-clock with random AI/intros.
+- Solo warps into MP-only stages trap (not a game path, LEVELS.md); Citadel warp loops.
+- 2.06 GiB initial memory (desktop only).
+- `route_dam.sh`'s in-level `SUP` looks down instead of walking (stick Y looks in the port's default
+  control style); `CUPHOLD`/`CNONE` walks (level_sweep.sh uses it).
+
+## Next session — recommended (after G3)
+1. A same-machine native reference: arm64 native Linux build in Docker (no emulation; game TUs need the
+   LP64 `__x86_64__` fixes the way the web build gets them) under Xvfb/llvmpipe with `GE_PCDUMP`, to
+   settle the Egypt / MP dark-area question and for golden comparisons beyond the start view.
+2. A human pass in a real browser: pointer lock (first click?), a real gamepad + rumble, audio by ear
+   (AudioWorklet), hidden-tab pause/resume, the unload path.
+3. Saves/config persistence (IDBFS or IndexedDB sync of `ge007.eep`/`ge007.ini`; webpage.c already
+   writes the config on unload), export/import (W4).
+4. Det mode on the web (`GE_DETERM`) so sweeps compare frame by frame.
 
 ## After G4 (ROM data) — recommended
 1. Struct-aware fill for the residual small fields (file_resource_table, PitemZ_entries,

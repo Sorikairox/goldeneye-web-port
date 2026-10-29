@@ -491,6 +491,19 @@ flash, controller pak).
 35. Converters ported from Python must reproduce Python's incidental orderings (dict insertion order,
     stable sorts, last-write-wins maps, set iteration) to be byte-identical; port line by line, then
     diff the outputs before trusting a single file. (GoldenEye G4)
+36. A renderer taken from a desktop port silently takes its fallbacks on WebGL2 (GLSL ES): no
+    `noperspective` (sky/water gradients wrong), no depth clamp, no mirror clamp, `mediump` floats.
+    WebGL2 has the extensions, but each must be enabled per context before use. Put the start view of
+    every level next to the native port's reference frames early. (GoldenEye G3)
+37. `-sMEMORY64=2`: a C callback that returns a pointer to the glue (SDL's beforeunload returns `""`)
+    arrives as a BigInt and `UTF8ToString` throws while the page closes; replace such callbacks
+    (return NULL) and run the clean-exit work synchronously there. (GoldenEye G3)
+38. Cross-session lock files: a wrapper that takes the lock around a tool that takes the same lock
+    deadlocks (the tool waits on its own parent); let the tool accept a lock held by an ancestor.
+    (GoldenEye G3)
+39. Scripted pads in sweeps: know what each button does once gameplay starts (an "intro skip" A
+    cycled to grenades and Bond blew himself up in a lift; the stick's Y axis looked instead of
+    walking). Read the screenshots before filing a bug. (GoldenEye G3)
 
 ---
 
