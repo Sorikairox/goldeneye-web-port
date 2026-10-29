@@ -250,9 +250,20 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     // Vertex shader
 
     vs_len += sprintf(vs_buf + vs_len, "#version %s\n", gl_glsl_version_str);
+    if (gl_es && gfx_rdp_affine) {
+        // WebGL2 / GLES: noperspective comes from NV_shader_noperspective_interpolation (enabled in
+        // gfx_opengl_init_extensions on the web); the directive must follow #version
+        append_line(vs_buf, &vs_len, "#extension GL_NV_shader_noperspective_interpolation : require");
+    }
 
     if (gl_es) {
+#ifdef __EMSCRIPTEN__
+        // WebGL2 guarantees highp in both stages; mediump is real half precision on Apple/mobile GPUs
+        // (ANGLE Metal), too coarse for positions, UVs and the combiner's wrap emulation
+        append_line(vs_buf, &vs_len, "precision highp float;");
+#else
         append_line(vs_buf, &vs_len, "precision mediump float;");
+#endif
     }
 
     if (gl_glsl_version >= 130) {
@@ -336,9 +347,20 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     // Fragment shader
 
     fs_len += sprintf(fs_buf + fs_len, "#version %s\n", gl_glsl_version_str);
+    if (gl_es && gfx_rdp_affine) {
+        // WebGL2 / GLES: noperspective comes from NV_shader_noperspective_interpolation (enabled in
+        // gfx_opengl_init_extensions on the web); the directive must follow #version
+        append_line(fs_buf, &fs_len, "#extension GL_NV_shader_noperspective_interpolation : require");
+    }
 
     if (gl_es) {
+#ifdef __EMSCRIPTEN__
+        // WebGL2 guarantees highp in both stages; mediump is real half precision on Apple/mobile GPUs
+        // (ANGLE Metal), too coarse for positions, UVs and the combiner's wrap emulation
+        append_line(fs_buf, &fs_len, "precision highp float;");
+#else
         append_line(fs_buf, &fs_len, "precision mediump float;");
+#endif
     }
 
     if (gl_glsl_version >= 130) {
@@ -1046,7 +1068,36 @@ static void *gl_load_proc(const char *name) {
     return NULL;
 }
 
+static int gl_noperspective_ext;   // GLSL ES noperspective available (web: NV extension)
+
+#ifdef __EMSCRIPTEN__
+// WebGL extensions must be enabled on the context before use (getExtension), and glad only sees what
+// Emscripten's glGetString(GL_EXTENSIONS) lists. Declared here instead of <emscripten/html5.h>.
+extern "C" int emscripten_webgl_enable_extension(uintptr_t context, const char *extension);
+extern "C" uintptr_t emscripten_webgl_get_current_context(void);
+#endif
+
 static void gfx_opengl_init_extensions(void) {
+#ifdef __EMSCRIPTEN__
+    // Web (GE_WEB): WebGL2 offers EXT_depth_clamp (DEPTH_CLAMP_EXT = GL_DEPTH_CLAMP 0x864F) and
+    // EXT_texture_mirror_clamp_to_edge (MIRROR_CLAMP_TO_EDGE_EXT = 0x8743) in current browsers. Without
+    // depth clamp, polygons crossing the near plane are clipped and leave holes that show the clear
+    // colour (black slabs over close pillars/walls: Egypt, split-screen); the shader fallback below
+    // (z *= 0.3) only narrows that. Without mirror clamp, textures fall back to GL_MIRRORED_REPEAT.
+    {
+        const uintptr_t ctx = emscripten_webgl_get_current_context();
+        const int dc = ctx && emscripten_webgl_enable_extension(ctx, "EXT_depth_clamp");
+        const int mc = ctx && emscripten_webgl_enable_extension(ctx, "EXT_texture_mirror_clamp_to_edge");
+        // D540 RDP-affine shade (sky/water horizon fades) needs the noperspective qualifier, which
+        // GLSL ES only has through this extension.
+        gl_noperspective_ext = ctx && emscripten_webgl_enable_extension(ctx, "NV_shader_noperspective_interpolation");
+        if (dc) GLAD_GL_ARB_depth_clamp = 1;
+        if (mc) GLAD_GL_ARB_texture_mirror_clamp_to_edge = 1;
+        sysLogPrintf(LOG_NOTE, "GL: WebGL EXT_depth_clamp %s, EXT_texture_mirror_clamp_to_edge %s, "
+                     "NV_shader_noperspective_interpolation %s", dc ? "on" : "unavailable",
+                     mc ? "on" : "unavailable", gl_noperspective_ext ? "on" : "unavailable");
+    }
+#endif
     // patch up some extension values and pointers
     if (!GLAD_GL_ARB_depth_clamp) {
         if (GLAD_GL_EXT_depth_clamp || GLAD_GL_NV_depth_clamp) {
@@ -1167,7 +1218,7 @@ static void gfx_opengl_init(void) {
      * RSP. GE_FOGPIXEL=1 = the D540 exact per-pixel fog (A/B). */
     {
         const char *sp = getenv("GE_SHADEPERSP"), *fp = getenv("GE_FOGPIXEL");
-        gfx_rdp_affine = (!gl_es && gl_glsl_version >= 130 && !(sp && sp[0] == '1')) ? 1 : 0;
+        gfx_rdp_affine = (((!gl_es && gl_glsl_version >= 130) || gl_noperspective_ext) && !(sp && sp[0] == '1')) ? 1 : 0;
         gfx_fog_vertex = (fp && fp[0] == '1') ? 0 : 1;   /* D543: per-vertex RSP fog by default */
     }
     sysLogPrintf(LOG_NOTE, "GL: shade %s, fog %s", gfx_rdp_affine ? "affine (RDP)" : "perspective",
