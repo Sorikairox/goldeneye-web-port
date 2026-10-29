@@ -257,7 +257,13 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     }
 
     if (gl_es) {
+#ifdef __EMSCRIPTEN__
+        // WebGL2 guarantees highp in both stages; mediump is real half precision on Apple/mobile GPUs
+        // (ANGLE Metal), too coarse for positions, UVs and the combiner's wrap emulation
+        append_line(vs_buf, &vs_len, "precision highp float;");
+#else
         append_line(vs_buf, &vs_len, "precision mediump float;");
+#endif
     }
 
     if (gl_glsl_version >= 130) {
@@ -348,7 +354,13 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     }
 
     if (gl_es) {
+#ifdef __EMSCRIPTEN__
+        // WebGL2 guarantees highp in both stages; mediump is real half precision on Apple/mobile GPUs
+        // (ANGLE Metal), too coarse for positions, UVs and the combiner's wrap emulation
+        append_line(fs_buf, &fs_len, "precision highp float;");
+#else
         append_line(fs_buf, &fs_len, "precision mediump float;");
+#endif
     }
 
     if (gl_glsl_version >= 130) {
