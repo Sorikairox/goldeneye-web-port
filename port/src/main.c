@@ -226,6 +226,12 @@ int main(int argc, char **argv)
     audioInit();
     mixerInit();
     inputInit();
+#if defined(GE_WEB)
+    {
+        extern void webPageInit(void);
+        webPageInit();   /* unload + hidden-tab pause (port/src/web/webpage.c) */
+    }
+#endif
 
     /* 4. Run the game. mainproc() runs as the N64 mainThread (a real OS
      *    thread with its own stack); it creates the rmon/idle/scheduler/

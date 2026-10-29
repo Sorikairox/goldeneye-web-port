@@ -19,6 +19,7 @@ extern "C" {
 /* Initialize the SDL audio device. Returns 0 on success. */
 int  audioInit(void);
 void audioDestroy(void);
+void audioSetPaused(int paused);
 
 /* Number of samples (stereo s16 frames) currently queued. */
 s32  audioGetSamplesBuffered(void);

@@ -1009,6 +1009,11 @@ static void gfx_opengl_log_info(void) {
     sysLogPrintf(LOG_NOTE, "GL: ARB_texture_mirror_clamp_to_edge: %s", GLAD_GL_ARB_texture_mirror_clamp_to_edge ? "yes" : "no");
 }
 
+#ifdef __EMSCRIPTEN__
+static int gl_missing_count;
+static char gl_missing_first[64];
+#endif
+
 static void *gl_load_proc(const char *name) {
     void *ret = SDL_GL_GetProcAddress(name);
     if (ret) {
@@ -1026,7 +1031,17 @@ static void *gl_load_proc(const char *name) {
         }
     }
 
+#ifdef __EMSCRIPTEN__
+    // Web (GE_WEB): WebGL2 is GLES 3.0, so glad's desktop-only entry points (1D textures, glPolygonMode,
+    // glMapBuffer, double-precision attribs, ...) are expected to be missing; ~90 ERROR lines per start
+    // were noise. Count them; one summary line after the load (gl_load_report_missing). The renderer
+    // only calls glDepthRange behind a glDepthRangef check.
+    if (gl_missing_count++ == 0) {
+        snprintf(gl_missing_first, sizeof(gl_missing_first), "%s", name);
+    }
+#else
     sysLogPrintf(LOG_ERROR, "GL: could not find function: %s", name);
+#endif
 
     return NULL;
 }
@@ -1065,8 +1080,17 @@ static void gfx_opengl_init_extensions(void) {
 }
 
 static void gfx_opengl_init(void) {
-    if (!gladLoadGLLoader(gl_load_proc) || glGetString == NULL || glEnable == NULL) {
-        sysFatalError("Could not load OpenGL.\nReported SDL error: %s", SDL_GetError());
+    {
+        int loaded = gladLoadGLLoader(gl_load_proc);
+#ifdef __EMSCRIPTEN__
+        if (gl_missing_count) {
+            sysLogPrintf(LOG_NOTE, "GL: %d desktop-only entry points not in WebGL2 (expected; first: %s)",
+                         gl_missing_count, gl_missing_first);
+        }
+#endif
+        if (!loaded || glGetString == NULL || glEnable == NULL) {
+            sysFatalError("Could not load OpenGL.\nReported SDL error: %s", SDL_GetError());
+        }
     }
 
     // check if we're using ES or core, which have more limited feature sets
