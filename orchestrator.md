@@ -35,7 +35,7 @@ it, don't append history) and the rules specific to this repo. Session history: 
 - **Reference:** the decompilation itself is cloned at `~/goldeneye-ref/007` (read-only reference).
 - **ROM:** `~/roms/GoldenEye_007_Europe.z64`, read-only, SHA-1 `167c3c433dec1f1eb921736f7d53fac8cb45ee31`
   (= the decomp's `ge007.e.sha1`). Dev copy: `data/ge007.pal-final.z64` (gitignored); never modify the original.
-- **Remote / hosting:** no private GitHub remote and no Netlify site yet: both need the user's go-ahead.
+- **Remote / hosting (user go-ahead 2026-10-30):** private repo `origin` = github.com/Sorikairox/goldeneye-web-port (back up with `scripts/web/backup_push.sh`); public site https://goldeneye-web-port.netlify.app (deploy the tested build with `scripts/web/deploy_web.sh`, which runs the `deploy_check.sh` gate first). No TURN (user: accept that ~10-20 % of pairs cannot connect).
 
 ## 2. Rules for this repo (ours override upstream's AGENTS.md / CLAUDE.md where they conflict)
 
