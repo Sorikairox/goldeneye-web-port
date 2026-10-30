@@ -230,6 +230,14 @@ static int net_has(unsigned f, int ch)
 }
 EMSCRIPTEN_KEEPALIVE int ge_net_ready(uint32_t f)
 {
+    /* G7 dev switch GE_DETSTOP=<retrace>: a det run stops after that retrace and keeps showing its last frame,
+     * so render-only A/B runs can be screenshotted at the same retrace (scripts/web/darkdet.sh). */
+    const char *detStop = getenv("GE_DETSTOP");   /* read every call: the page may set it after the first */
+    if (detStop) {   /* digits by hand: the decomp's libc atol has another signature (wasm trap) */
+        uint32_t stop = 0;
+        for (const char *c = detStop; *c >= '0' && *c <= '9'; c++) stop = stop * 10 + (uint32_t)(*c - '0');
+        if (f > stop) return 0;
+    }
     if (!geNetSessionOn || ge_rec_mode) return 1;
     for (int ch = 0; ch < 4; ch++)
         if ((s_mask >> ch & 1) && !net_has(f, ch)) return 0;

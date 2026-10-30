@@ -30,6 +30,8 @@
   const U32 = () => { if (!u32 || u32.buffer !== N.M.HEAPU8.buffer) u32 = new Uint32Array(N.M.HEAPU8.buffer); return u32; };
   // env variables a session may take from the URL (test scripts / logging; every peer's game must see the same values)
   const ENV_OK = /^GE_(NETPAD[0-3]|NETSCRIPT|NETHASHLOG|NETDESYNC|WKTRACE)=/;
+  // G7: offline det test runs (?netdet) also take render-only dev switches (A/B at the same retrace, darkdet.sh)
+  const ENV_DET_OK = /^GE_(DETSTOP|SHADEPERSP|FOGPIXEL|NEARCLIP|NEARCLIPFOG|D104|D176)=/;
   const N = {
     M: null, cfg: null, base: {}, log: (s) => console.log(s),
     enabled: Q.has('online') || Q.has('netdet') || Q.has('netloop') || Q.has('rec') || Q.has('replay') || lsGet(),
@@ -819,7 +821,7 @@
   // main.js preRun: the env variables the game sees (a session: only the whitelisted test ones)
   N.env = function (list) {
     if (!N.cfg) return list;
-    const out = list.filter((kv) => ENV_OK.test(kv));
+    const out = list.filter((kv) => ENV_OK.test(kv) || (Q.has('netdet') && ENV_DET_OK.test(kv)));
     if (N.cfg.script) out.push('GE_NETSCRIPT=1');
     if (out.length !== list.length + (N.cfg.script ? 1 : 0)) N.log(`[net] session: ${list.length - out.length + (N.cfg.script ? 1 : 0)} URL env variable(s) ignored`);
     return out;
