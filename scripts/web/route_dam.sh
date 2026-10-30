@@ -12,8 +12,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 SECS=${1:-75}; OUT=${2:-port_work/route-dam}
 # times (ms since SDL init): START skips the gun-barrel to the title, A = title -> file select,
-# A = file 1 (new), A = "select mission", A = Dam, stick up x2 = Agent, A, START at the briefing; in Dam: walk forward 4 s, fire, turn left 2 s (input check)
-PAD='20000:START;24000:A;28000:A;32000:A;34000:SUP;34200:SNONE;35000:SUP;35200:SNONE;36000:A;40000:START;60000:SUP;64000:SNONE;65000:Z;66000:SLEFT;68000:SNONE'
+# A = file 1 (new), A = "select mission", A = Dam, stick up x2 = Agent, A, START at the briefing; in Dam: walk forward
+# 4 s (C-up held: in the default control style the stick's Y axis looks up/down), fire, turn left 2 s (input check)
+PAD='20000:START;24000:A;28000:A;32000:A;34000:SUP;34200:SNONE;35000:SUP;35200:SNONE;36000:A;40000:START;60000:CUPHOLD;64000:CNONE;65000:Z;66000:SLEFT;68000:SNONE'
 ASSETS=""; [ "${ROUTE_DEV_ASSETS:-0}" = 1 ] && ASSETS="&assets=../dev"
 URL="http://localhost:${GE_PORT:-8770}/app/index.html?romurl=../dev/ge007.pal-final.z64$ASSETS&env=GE_INPUTSCRIPT_MS=1&env=GE_INPUTSCRIPT=$PAD${GE_EXTRA_PARAMS:-}"
 node scripts/web/probe.mjs "$URL" "$SECS" "$OUT" 3 | grep -E '^probe: (main|contact|timeout)|EXCEPTION|STALL' || true
