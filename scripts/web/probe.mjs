@@ -80,6 +80,18 @@ if (process.env.PROBE_PRELOAD) await call('Page.addScriptToEvaluateOnNewDocument
 tNav = Date.now(); await call('Page.navigate', { url });
 if (process.env.PROBE_PROFILE) setTimeout(() => call('Profiler.start'), +process.env.PROBE_PROFILE * 1000);
 const t0 = Date.now();
+// PROBE_FILE="3:#romfile:/abs/path/rom.z64": at <s since navigation>, put a host file into a file input
+// (CDP DOM.setFileInputFiles), as a player choosing it would; the input's change event fires. For testing
+// the deployed site, which ignores the dev ?romurl= path only when no ROM is stored.
+for (const ent of (process.env.PROBE_FILE || '').split(',').filter(Boolean)) {
+  const [t, sel, ...p] = ent.split(':');
+  setTimeout(async () => {
+    const doc = await call('DOM.getDocument');
+    const q = await call('DOM.querySelector', { nodeId: doc.result.root.nodeId, selector: sel });
+    const r = await call('DOM.setFileInputFiles', { nodeId: q.result.nodeId, files: [p.join(':')] });
+    console.log(`probe: file ${p.join(':')} -> ${sel}${r.error ? ' FAILED ' + r.error.message : ''}`);
+  }, +t * 1000);
+}
 // PROBE_KEYS="62:KeyW:3,70:Space:0.2": real keyboard events (CDP Input) at <s since navigation>,
 // held for <s> -- checks the page's own SDL keyboard path (not the scripted pad)
 for (const ent of (process.env.PROBE_KEYS || '').split(',').filter(Boolean)) {
