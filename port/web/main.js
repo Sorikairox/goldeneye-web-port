@@ -130,6 +130,8 @@ async function fillCheck(M, t) {
 // --- start the game ------------------------------------------------------------------------------
 let started = false;
 async function start(rom, romsum) {
+  // G6: with "Online multiplayer" on, the game waits for a session (or "Play offline"); net.js calls back
+  if (window.GENet && GENet.hold(rom, romsum, () => start(rom, romsum))) return;
   if (started) return; started = true;
   document.getElementById('rompick').style.display = 'none';
   status('loading…');
@@ -145,7 +147,8 @@ async function start(rom, romsum) {
     // dev/test: &env=NAME=VALUE (repeatable) sets a C environment variable (getenv) before main(),
     // e.g. &env=GE_WKTRACE=900 or &env=GE_INPUTSCRIPT=120:START;180:A (port/src/input.c)
     preRun: [() => {
-      for (const kv of params.getAll('env')) {
+      const envs = window.GENet ? GENet.env(params.getAll('env')) : params.getAll('env');   // G6: a session whitelists
+      for (const kv of envs) {
         const i = kv.indexOf('='); Module.ENV[i < 0 ? kv : kv.slice(0, i)] = i < 0 ? '1' : kv.slice(i + 1);
       }
     }],
@@ -192,7 +195,8 @@ async function start(rom, romsum) {
       status('');
       log('[page] calling main()');
       // ?args=-level_09+-foo passes command-line arguments (as on native)
-      const args = (params.get('args') || '').split(/[ +]/).filter(Boolean);
+      let args = (params.get('args') || '').split(/[ +]/).filter(Boolean);
+      if (window.GENet) { args = GENet.args(args); await GENet.beforeMain(M); }   // G6: online session setup
       try { Module.callMain(args); } catch (e) { if (e !== 'unwind') { log('[page] main threw: ' + e); throw e; } }
     },
   };
