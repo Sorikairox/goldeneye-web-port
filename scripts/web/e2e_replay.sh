@@ -5,11 +5,11 @@
 #   scripts/web/e2e_replay.sh [SECS=60] [OUT=port_work/g6/e2e]
 # The route (GE_NETPAD0, retraces): intro skip -> file 1 -> select mission -> Dam -> Agent -> briefing -> Dam, walk
 # and fire. Recordings go to data/g6-*.gerec (gitignored dev dir the server exposes as ../dev/).
-# Env: GE_PORT (8772), REPLAY_SECS (time given to each replay, default SECS/2 + 20).
+# Env: GE_PORT (8772), REPLAY_SECS (time given to each replay, default SECS + 20).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 SECS=${1:-60}; OUT=${2:-port_work/g6/e2e}; mkdir -p "$OUT"
-RS=${REPLAY_SECS:-$((SECS / 2 + 20))}
+RS=${REPLAY_SECS:-$((SECS + 20))}   # a fast replay runs ~60-70 retraces/s on SwiftShader (rendering bound)
 PAD='1100:A;1300:A;1400:A;1600:A;1700:A;1800:SUP;1806:SNONE;1850:SUP;1856:SNONE;1900:A;2100:START;2600:CUPHOLD;2800:CUPREL,SLEFT;2850:SNONE;2900:Z;2950:Z;3000:CUPHOLD,SX30;3300:CUPREL,SNONE'
 U="http://localhost:${GE_PORT:-8772}/app/index.html?romurl=../dev/ge007.pal-final.z64"
 echo "e2e: recording $SECS s"
@@ -33,5 +33,5 @@ open(sys.argv[3], 'w').write(json.dumps(rec))
 EOF
 for k in rec mut; do
   PROBE_EVALS="$((RS - 1)):JSON.stringify(__rec.result())" node scripts/web/probe.mjs "$U&replay=../dev/g6-$k.gerec&recfast=1" "$RS" "$OUT/replay-$k" 10 | grep -E '^probe: (contact|timeout)|EXCEPTION' || true
-  echo "replay $k: $(grep -E '\[rec\] (replay:|FIRST)' "$OUT/replay-$k/console.log" | sed 's/.*\[rec\]/[rec]/' | tr '\n' ' ')"
+  echo "replay $k: $(grep -E '\[rec\] (replay:|FIRST)|probe-eval' "$OUT/replay-$k/console.log" | sed 's/.*\[rec\]/[rec]/' | tr '\n' ' ')"
 done

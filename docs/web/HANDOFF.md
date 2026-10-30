@@ -3,7 +3,10 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 + G4 + G5, 2026-10-30)
+## Current state (after G3 + G4 + G5 + G6, 2026-10-30)
+
+G6: optional online multiplayer (deterministic input lockstep over WebRTC, 2-4 players), branch `web-net`
+(section "Online multiplayer" below, `docs/web/ONLINE.md`).
 
 G5: saves persist in IndexedDB with export / import and an online sandbox seam (section "Saves in the
 browser" below).
@@ -30,6 +33,45 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## Online multiplayer (G6, 2026-10-30)
+
+Design, determinism table, results and what is left: `docs/web/ONLINE.md`. Branch `web-net` (worktree
+`~/goldeneye-wt/net`).
+
+- **Det mode** (`geNetDetOn`, `port/src/web/webnet.c`; hooks in `webkernel.c`, `libultra.c`, `audio.c`, `input.c`,
+  `config.c`, `optionsoverlay.c`, `main.c`): det clock for `osGetCount` / `osGetTime` / timers, fibers run only
+  inside retraces (spinners park until the next retrace), virtual AI queue, controller reads from the input ring,
+  pure N64 pad (port input adapters that write game state are off), fixed session options, sandboxed EEPROM (G5
+  seam), 4 ms timer loop, frame barrier, time sync, kick, hidden-page worker. Off (no session) every path is the
+  original one.
+- **State hash:** H = game data from the link map (`scripts/web/netregions.py` -> `ge007.netregions`, built by
+  `build.sh`) + 8 MiB DRAM + the live EEPROM image, in 4 KB pages; S = the game fibers' asyncify buffers.
+- **Page:** `port/web/net.js` (from Conker's net.js): Online panel behind the checkbox "Online multiplayer
+  (experimental)", copy-paste codes, room codes, mesh + host relay, desync report, lost player, recorder.
+- **Room server:** `port/netlify/functions/room/` (not deployed); local copy `scripts/web/roomserver.mjs` on
+  127.0.0.1:8773 for tests.
+- **Proofs (numbers in ONLINE.md section 6):** offline det, the real menu route into a 4-player Temple match:
+  two runs identical at 6870 / 6870 retraces (H and S), one changed input diverges at the next retrace. Online
+  (one headless Chrome, 2-4 windows): 2P 7441 / 7441 identical (99.3 % speed); 2P with 40+0..20 ms and 5 % loss
+  7437 / 7437 (99.5 %, auto D 4); 4P with netsim, one relayed pair and a player leaving 9776 / 9776 (99.9 %);
+  4P by room code through the panel (local room server) 5450 / 5450; hidden guest page 30 s 5534 / 5534; a
+  flipped DRAM byte is reported as a desync at that retrace with the page named. Recorder: a 70 s recording replays with 65 / 65 checkpoints identical; one changed input is
+  found at the next checkpoint.
+
+How to run the tests: `docs/web/ONLINE.md` section 5b. Own containers: `GE_DEV=goldeneye-g6-dev`,
+`GE_SERVE=goldeneye-g6-serve` (port 8772).
+
+### Traps found in G6
+- Fibers on browser frames / spinners resumed per browser frame are not deterministic: det runs fibers only inside
+  retraces (playbook trap 43).
+- The port's input layer writes game state directly (mouse-aim turn, crouch, style, gadget, sway): pure pad online
+  (trap 44).
+- Machine-dependent options (window aspect, GPU low-end check, Deck preset) must be pinned in a session (trap 45).
+- C (shadow) stacks of fibers carry uninitialised slack with log text: hash the asyncify buffers (trap 46).
+- Editing a running bash test script kills the run (trap 47); copy it first.
+- The MP menu needs >= 2 controllers present at `osContInit`: the session mask must be set before main().
+- In the MP options menu START starts the match; the real route takes ~1900 retraces (38 s) from power-on.
 
 ## Saves in the browser (G5, 2026-10-30)
 

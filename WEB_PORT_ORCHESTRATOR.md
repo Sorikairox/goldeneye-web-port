@@ -513,6 +513,22 @@ flash, controller pak).
     checksum code (in wasm), not just the size. (GoldenEye G5)
 42. Persistence tests with a probe that deletes its profile and SIGKILLs Chrome prove nothing: keep the
     profile and close Chrome cleanly (CDP `Browser.close`). (GoldenEye G5)
+43. A fiber scheduler driven by browser frames is not deterministic even with a det clock: fibers that run on
+    frames without a retrace, and busy-waiters resumed "next browser frame", make each retrace's work depend on
+    the display rate. Det mode: fibers run only inside a retrace until all block, spinners park until the next
+    retrace, and the det clock (retrace x quantum + a tick per read, capped below half a retrace) makes the game's
+    own frame wait end exactly at the next retrace. (GoldenEye G6)
+44. A PC port's input layer may write game state directly (mouse-aim turn, free crouch, control-style forcing, a
+    gadget key, gun sway from mouse speed). Online only the N64 pad travels: give the input layer a "pure pad"
+    switch and turn those adapters off in a session, or the peers diverge on the first mouse move. (GoldenEye G6)
+45. Options that read the machine (window aspect for a widescreen projection, a GPU-name "low end" check that
+    lowers draw / LOD distance, a Steam Deck preset) change game state per peer even with the same ini: pin them
+    in a session, and never write the host's ini back on a guest. (GoldenEye G6)
+46. Hashing fiber C (shadow) stacks for desync checks: live frames keep uninitialised slack written by earlier
+    deeper calls (log formatting with wall-clock numbers, the renderer), so identical runs differ there. Hash the
+    asyncify buffers (the saved wasm locals) and the game data instead. (GoldenEye G6)
+47. Never edit a bash script while a background run of it is still going: bash reads the file as it executes,
+    and the run dies with a syntax error at the shifted offset. Copy test scripts before long runs. (GoldenEye G6)
 
 ---
 
