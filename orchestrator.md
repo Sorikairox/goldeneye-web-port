@@ -20,8 +20,9 @@ it, don't append history) and the rules specific to this repo. Session history: 
   works (fake pad); pointer lock / real pads / audio by ear need a human. G4: sidecars converted in the
   browser (C port of the converters, IndexedDB cache) and ROM data stripped from the wasm (template +
   fill at boot, `deploy_check.sh` gate). G5: saves persist in IndexedDB per ROM SHA-1
-  (export/import in the page, `?nosave`, online sandbox seam `GESaves.sandbox`). Open: Egypt / MP
-  dark-or-grey surfaces (native reference needed). G6 (branch `web-net`, `docs/web/ONLINE.md`): optional
+  (export/import in the page, `?nosave`, online sandbox seam `GESaves.sandbox`). G7: the Egypt / MP
+  dark-or-grey surfaces are the same on the native port (aarch64 native reference build,
+  `scripts/web/native_ref.sh`); not a web bug, N64 parity of those views unchecked. G6 (branch `web-net`, `docs/web/ONLINE.md`): optional
   online multiplayer, deterministic input lockstep over WebRTC for 2-4 players (det mode, state hashes,
   copy-paste codes, room codes on a local server, recorder); production room function and a real
   two-machine test wait for the user. How to build/run/test: `docs/web/HANDOFF.md`.

@@ -3,7 +3,13 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 + G4 + G5 + G6, 2026-10-30)
+## Current state (after G3 + G4 + G5 + G6 + G7, 2026-10-30)
+
+G7: the "dark areas" (Egypt pillars, MP black / flat-grey walls) are **not a web-port bug**: the native
+PC port, built and run on this Mac (aarch64 Linux in Docker, llvmpipe), renders the same surfaces the
+same way (section "Dark areas (G7)" below). No rendering change was made. New tools: a native reference
+build (`scripts/web/native_ref.sh`) and det runs that stop at a chosen retrace (`GE_DETSTOP`,
+`scripts/web/darkdet.sh`).
 
 G6: optional online multiplayer (deterministic input lockstep over WebRTC, 2-4 players), branch `web-net`
 (section "Online multiplayer" below, `docs/web/ONLINE.md`).
@@ -33,6 +39,56 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## Dark areas (G7, 2026-10-30)
+
+**Verdict: the web port draws what the native port draws.** Confidence: high that it is not web-specific
+(same-spawn and same-situation native frames show all three symptoms); medium that the native port is
+itself faithful to the N64 (both share fast3d and the data; upstream compared near-camera shading and fog
+against LLE mupen64plus / angrylion for D543/D553, but nobody has put these exact views next to an N64).
+
+What the surfaces are (probes at a det-stopped retrace, `port_work/g7/`):
+- Egypt pillar near the camera, almost black: room geometry, combiner `TEXEL x SHADE`; the triangles carry
+  vertex colours at or near 0,0,0 straight from the room vertex table. The colour bytes in memory never
+  change after the room load (checksum at load vs every draw, 0 changes), no light-fixture code runs in
+  Egypt. Native frame with the same kind of pillar: `port_work/g7/compare/egypt-native-f750.png`
+  (web: `egypt-web-22s.png`).
+- MP Temple black areas (and G6's dark 4-player views): either the cloud sky's region covered by large
+  near models (overhangs / blocks, w 300-600, vertex colour ~68, blender fog towards black 40 %) or room
+  walls with dark vertex colours. Not portal culling (a no-cull switch left the frame unchanged), not the
+  sky (dropping every sky triangle changed 210 pixels). Same spawn on native (fresh save, same
+  `GE_STARTMP=2,1`): `compare/temple2p-spawn-native.png` vs `temple2p-spawn-web.png`, the same black area.
+- MP flat light grey (130,130,130): a near model with bright vertex colours (129-188) and partial fog,
+  drawn last at that pixel; native shows the same kind of flat grey surface in the same situation
+  (`compare/temple2p-grey-native-f1000.png` vs `temple2p-grey-web-24s.png`).
+
+Ruled out on the way (all A/B at the same det retrace, pixel-compared): GPU side-plane clipping of
+`noperspective` shade/fog (a CPU clip at the RSP's x/y guard band, FRUSTRATIO_2, gave a pixel-identical
+frame; reverted), perspective vs affine shade (`GE_SHADEPERSP=1` identical), portal culling, the sky,
+the room vertex data (unchanged), light fixtures, room pool (G3), fog mode and near clip (G3). The cloud
+sky's environment record, vertex values, ENV colour and the sky textures match native byte for byte.
+
+Reproduce:
+```sh
+GE_SERVE=goldeneye-g7-serve bash -c '. scripts/web/env.sh && scripts/web/serve.sh 8774'
+EVERY=50 bash scripts/web/darkdet.sh port_work/g7/s2120 50 '&env=GE_DETSTOP=2120'    # 4P Temple, dark in all views
+GE_PORT=8774 OUT=port_work/g7/mp bash scripts/web/mp_sweep.sh 2,1:temple              # 2P: flat grey at 21-36 s (same every run)
+GE_PORT=8774 OUT=port_work/g7/eg bash scripts/web/level_sweep.sh 32:egypt             # dark pillar in most runs after ~20 s
+bash scripts/web/native_ref.sh build
+rm -f data/ge007.ini data/ge007.eep    # fresh native config and save
+bash scripts/web/native_ref.sh run port_work/g7tmp/nat 45 "GE_FAKE_LOWEND=0 GE_PCDUMP=0-4000:25 GE_MPVIRT=1 GE_STARTMP=2,1" # + pads like mp_sweep.sh
+```
+`GE_DETSTOP=<retrace>` holds a det run (`?netdet`) at that retrace; offline det runs also take the
+render-only switches `GE_SHADEPERSP`, `GE_FOGPIXEL`, `GE_NEARCLIP`, `GE_NEARCLIPFOG`, `GE_D104`,
+`GE_D176` (online sessions keep the whitelist). Native runs: `GE_FAKE_LOWEND=0` (llvmpipe is otherwise
+classed low-end and the draw distance halved; that shows the sky through distant floors), ms-timed pads
+work (movement scales with frame time, llvmpipe runs ~20 fps), frames land in `OUTDIR/ppm/*.png`.
+
+Native aarch64 build fixes (port-side or layout-only, all PC builds benefit): `GE_LP64_GAME_DEFINE`
+CMake option (game TUs get `__x86_64__` as on the web), low game-thread stacks without `MAP_32BIT`
+(`portAllocLowStack` hint loop; G2's amd64-emulated `texReadBits` crash was this), and
+`bgMarkSpecialPortals` (was `sub_GAME_7F0B37EC`) bounded by its own array instead of the address of
+the next global (porting-notes D5; the web layout was already adjacent).
 
 ## Online multiplayer (G6, 2026-10-30)
 
@@ -260,7 +316,25 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
 | sidecar converters (C) | `port/src/convert/geconv.{c,h}`; page glue `port/src/web/geconvweb.c`; inputs `scripts/web/gen_geconv_inputs.py` → `build-web/geconv_inputs.c`; native-style check tool `tools_web/geconv_cli.c` |
 | template + fill | build: `tools_web/romfill.c` via `scripts/web/romfill.sh`; boot: `port/src/web/romfill.c`; checks `scripts/web/fillcheck.py` |
 | saves (G5) | C: `port/src/web/websave.c`, `GE_WEB` blocks in `port/src/libultra.c` (EEPROM), `config.c`, `eepimport.c` (`ge_web_eep_check`); page: `port/web/saves.js` (`GESaves`), Save box in `index.html`; test `scripts/web/save_test.sh` |
+| native reference (G7) | `scripts/web/native_ref.sh` (aarch64 Linux container, Xvfb/llvmpipe, `GE_PCDUMP` -> PNG via `scripts/web/ppm2png.py`), CMake `GE_LP64_GAME_DEFINE` |
+| det stop / dark repro (G7) | `GE_DETSTOP` in `port/src/web/webnet.c`, `ENV_DET_OK` in `port/web/net.js`, `scripts/web/darkdet.sh` |
 | deploy gate | `tools_web/romscan.c`, `tools_web/romscan_attr.py`, `scripts/web/romscan.{sh,allow}`, `scripts/web/deploy_check.sh` |
+
+## Traps found in G7
+- An "unreproducible" web rendering bug may be the scripted pad, not the renderer: logging that slows the
+  game moves Bond and the symptom vanishes. Use det mode and stop at a retrace (`GE_DETSTOP`) instead of
+  printing during wall-clock runs, then A/B render-only switches on the same frame.
+- A same-machine native reference needs more than `-D__x86_64__`: on aarch64 Linux there is no
+  `MAP_32BIT` (game stacks above 4 GiB break `(u32)` pointer idioms) and GCC's data order differs from the
+  N64 linker's (a loop bounded by the next global's address ran away). Fix those port-side and the
+  native build runs under Xvfb/llvmpipe on an Apple-silicon Mac without emulation.
+- llvmpipe is classed "low end" by the native PC port and halves the draw
+  distance on first start; set `GE_FAKE_LOWEND=0` and delete the saved ini, or native frames show sky
+  through distant floors that the web build draws.
+- The decomp's own libc (atol, ...) is linked into the web build with other signatures; port code that
+  calls such names traps (`signature_mismatch:atol`). Parse by hand or use port helpers.
+- Offline det sessions filter `&env=` through the online whitelist: a dev switch silently does nothing
+  unless it is in `net.js` `ENV_DET_OK`.
 
 ## Traps found in G5
 - An IndexedDB write started while the page closes may never complete; `beforeunload` listeners run
@@ -347,9 +421,9 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
   probe.mjs takes it). `scripts/web/serve_node.mjs` serves the site without Docker.
 
 ## Open problems
-- Egypt dark pillar / MP black or grey wall areas (LEVELS.md): needs a native reference at the same
-  spot. Ruled out on the web side: room-model pool (`GE_D104`: 0 FAIL / SKIP), CPU near clip
-  (`GE_NEARCLIP=0`), fog mode (`GE_FOGPIXEL=1`), GL backend (SwiftShader and Metal).
+- Egypt dark pillar / MP black or grey wall areas: same on the native port (G7, "Dark areas" above);
+  N64 fidelity of those views not checked against an N64 / LLE emulator. Identify the flat-grey Temple
+  model (model + texture) before calling it faithful.
 - Pointer lock (mouse aim) and real gamepads/rumble: need a human in a real browser. SDL requests the
   lock in its mousedown handler once the game has turned relative mode on (port click-to-lock), so the
   first click arms and the lock may only come with the second click; check that.
@@ -364,6 +438,12 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
 - Saves: real-browser checks by a human (download dialog of Export, the file picker, closing the tab
   right after a save, private windows / blocked storage); a mission-completion save shown on the
   file-select screen was not scripted.
+
+## Next session — recommended (after G7)
+1. If the dark / grey surfaces still need an answer: identify the flat-grey Temple model and the Egypt
+   pillar vertex colours in the ROM data, and compare one view with an LLE N64 emulator (angrylion) in
+   Docker; the native reference (`native_ref.sh`) and `GE_DETSTOP` make the web side reproducible.
+2. Use `native_ref.sh` for other fidelity questions (native frames beyond the golden start views).
 
 ## Next session — recommended (after G5)
 1. G6 (online): use `GESaves.sandbox(hostImage)` before `main()` (seam above); hash

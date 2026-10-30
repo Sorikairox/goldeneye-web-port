@@ -42,7 +42,7 @@ How it was run:
 | 17 | Caverns | 39 | yes | yes (= golden) | 50.0 / 50.0 / 0 | none | (sweep 1: the A pulse selected grenades and Bond blew himself up: test artefact) |
 | 18 | Cradle | 41 | yes | yes (= golden) | 50.0 / 50.0 / 0 | none | "Trevelyan has activated the antenna control console" |
 | 19 | Aztec | 28 | yes | yes (= golden) | 50.0 / 50.0 / 0 | none | |
-| 20 | Egypt | 32 | yes | mostly; **open item** | 50.0 / 50.0 / 0 | none | start view = golden; in several runs a pillar close to the camera (and once two mid-distance pillars) renders almost black (dark gradient, decals still drawn) for many seconds, on SwiftShader and Metal, with and without `GE_NEARCLIP=0` / `GE_FOGPIXEL=1`; not reproducible run to run (random AI/intro). Native reference needed |
+| 20 | Egypt | 32 | yes | yes (= native, G7) | 50.0 / 50.0 / 0 | none | start view = golden; in several runs a pillar close to the camera (and once two mid-distance pillars) renders almost black (dark gradient, decals still drawn) for many seconds, on SwiftShader and Metal, with and without `GE_NEARCLIP=0` / `GE_FOGPIXEL=1`; not reproducible run to run (random AI/intro). G7: the native port renders such pillars the same way (vertex colours near 0 from the room data); not a web bug |
 | - | Cuba (ending) | 54 | yes | yes (= golden) | 50.0 / 49.1 / 0 | none | ending cutscene, then back to the boot screens (as native, see `tools_pc/golden/README.md`) |
 
 No wasm trap, no `STALL`, no refused `emscripten_sleep`, main thread answering at the end, in every solo
@@ -57,17 +57,17 @@ options (`init_mp_options_for_scenario`), random spawns. Two runs (`port_work/mp
 
 | Players | Arena (index) | Loads | Renders right | Pacing (steady) | Errors | Notes |
 |---|---|---|---|---|---|---|
-| 2 | Temple (1) | yes | mostly; **open item** | 50.0 / 0 | none | split views, radar, independent seats; in some views a big wall area is flat light grey (the 2P sky colour 120,120,120) or black |
+| 2 | Temple (1) | yes | yes (= native, G7) | 50.0 / 0 | none | split views, radar, independent seats; in some views a big area is flat light grey or black; G7: a near model with bright vertex colours / dark walls and overhangs, the same on native at the same spawn |
 | 2 | Complex (2) | yes | yes | 50.0 / 0 | none | |
 | 2 | Caves (3) | yes | yes | 49.9-50.0 / 0 | none | dark level |
-| 2 | Library (4) | yes | mostly; **open item** | 48.5-50.0 / 0-13 | none | a large black area over the balcony in one view |
+| 2 | Library (4) | yes | probably (same family as Temple; Library not compared on native, G7) | 48.5-50.0 / 0-13 | none | a large black area over the balcony in one view |
 | 2 | Basement (5) | yes | yes | 50.0 / 0 | none | |
 | 2 | Stack (6) | yes | yes | 50.0 / 0 | none | |
 | 2 | Facility (7) | yes | yes | 50.0 / 0 | none | one seat in the vent |
 | 2 | Bunker (8) | yes | yes | 50.0 / 0 | none | |
 | 2 | Archives (9) | yes | yes | 50.0 / 0 | none | |
 | 2 | Caverns (10) | yes | yes | 50.0 / 0 | none | |
-| 2 | Egypt (11) | yes | mostly | 50.0 / 0 | none | black/grey close surfaces like solo Egypt |
+| 2 | Egypt (11) | yes | yes (G7) | 50.0 / 0 | none | black/grey close surfaces like solo Egypt |
 | 3 | Bunker (8) | yes | yes | 50.0 / 0 | none | 3 views + the empty fourth quarter (as N64) |
 | 4 | Temple (1) | yes | yes | 50.0 / 0 | none | 4 views, all seats move |
 | 4 | Complex (2) | yes | yes | 50.0 / 0 | none | |
@@ -93,7 +93,16 @@ Egypt and 2P Temple), not the CPU near clip (`GE_NEARCLIP=0` same), not the fog 
 missing WebGL depth clamp / noperspective (present after `c2727145`, still seen). Bullet-hole decals
 stay visible on the dark surface. A native run at the same spot decides whether it is faithful.
 
-## What to look at next
+## G7 verdict on the dark / grey areas (2026-10-30)
+Native reference built and run on the same Mac (`scripts/web/native_ref.sh`, aarch64 Linux, llvmpipe):
+the native port shows the near-black Egypt pillars, the large black areas in 2P Temple at the same spawn
+and the flat light-grey surfaces too (`port_work/g7/compare/`). On the web side, at a det-stopped retrace
+(`scripts/web/darkdet.sh`, `GE_DETSTOP`), the dark pixels come from geometry drawn with its own dark vertex
+colours and fog (room walls, large near models), not from culling, the sky, clipping, the shade
+interpolation or changed vertex data. Details and confidence: `docs/web/HANDOFF.md`, "Dark areas (G7)".
+2P Temple through `mp_sweep.sh` is the same every run (flat grey in the second view from 21 s).
+
+## What to look at next (G3 notes, before G7)
 - Egypt dark pillars: compare with a native build on the same spot (an arm64 native Linux build in
   Docker with Xvfb/llvmpipe would give a same-machine reference; the amd64 container crashes under
   emulation), then decide web-specific or faithful.

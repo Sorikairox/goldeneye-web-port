@@ -529,6 +529,14 @@ flash, controller pak).
     asyncify buffers (the saved wasm locals) and the game data instead. (GoldenEye G6)
 47. Never edit a bash script while a background run of it is still going: bash reads the file as it executes,
     and the run dies with a syntax error at the shifted offset. Copy test scripts before long runs. (GoldenEye G6)
+48. Before chasing a "web-only" rendering bug, build the native port on the same machine and look at the same
+    situation: GoldenEye's dark walls and pillars were the same on native (authored vertex colours and fog).
+    On an Apple-silicon Mac that means an aarch64 Linux container (no emulation; the amd64 one crashed): give
+    game TUs the LP64 macro the port gates its fixes on, allocate low game stacks without `MAP_32BIT`, and fix
+    loops bounded by "the next global's address". (GoldenEye G7)
+49. Make render bugs reproducible before probing: printing from the renderer slows a wall-clock run and moves
+    the player, so the symptom disappears. Stop a deterministic run at a chosen retrace and A/B render-only
+    switches on that exact frame (pixel diff), then probe the triangles that cover one pixel. (GoldenEye G7)
 
 ---
 

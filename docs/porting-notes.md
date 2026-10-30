@@ -1122,6 +1122,11 @@ past it (walk off the end).
   any `for`/`while`/`do` whose end pointer is the address of a *different*
   symbol than the one being iterated.
 
+**Second instance (G7, web port, 2026-10-30):** `bgMarkSpecialPortals` (was `sub_GAME_7F0B37EC`,
+`src/game/bg.c`) walked `specialportalarray` until `&g_BgCurrentRoom`. x86-64 GCC and wasm-ld keep the two
+adjacent; GCC on aarch64 Linux did not, and the walk spun at level load. Fixed under `PORT` with the
+array's own end (`specialportalarray + sizeof(specialportalarray)`).
+
 ## D6. Non-void function with no `return`; latent until `-O2`
 
 The decomp has a handful of functions declared to return a value (often
