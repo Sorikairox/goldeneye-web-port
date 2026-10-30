@@ -164,6 +164,12 @@ int main(int argc, char **argv)
      * keys are untouched), so a first launch from Desktop Mode no longer
      * skips it for good. */
     configLoad();
+#if defined(GE_WEB)
+    {
+        extern void geNetApplySessionConfig(void);
+        geNetApplySessionConfig();   /* G6: no-op without an online session (port/src/web/webnet.c) */
+    }
+#endif
     videoApplySteamDeckPreset();
     updateCheckStart();   /* opt-in (Game.CheckUpdates, default off); no-op otherwise */
     atexit(portAtExit);   /* persist config + window geometry on clean exit */

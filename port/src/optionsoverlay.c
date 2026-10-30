@@ -2246,6 +2246,10 @@ void optionsOverlayTestStep(char c)
 
 void optionsOverlayToggle(void)
 {
+#if defined(GE_WEB)
+    extern int geNetDetOn;   /* G6: options are fixed by the host during a session */
+    if (geNetDetOn && !s_open) { sysLogPrintf(LOG_NOTE, "options overlay: not during an online session"); return; }
+#endif
     overlayInit();
     if (s_open) {
         if (optionsBindingCaptureActive()) return; /* Escape cancels modal */

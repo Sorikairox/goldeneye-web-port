@@ -475,6 +475,10 @@ static int  padPreset[MAX_PADS] = {0};           /* D518: per-seat (Input.PadPre
  * 0 = legacy 1.1/HONEY + D166 digital pulse.
  * (D498: declared here so the stick-style helpers below can read it.) */
 static int naturalPitchMode = 1;                 /* Input.NaturalPitch */
+/* G6 (port/src/web/webnet.c): 1 in an online session / det run. The pad this file computes is then the only
+ * way local input reaches the game (it travels to every peer); the adapters that write game state directly
+ * (control-style forcing, free crouch, gadget key, PD mouse-aim turn, gun-sway feed) are off. */
+int geNetPurePad = 0;
 static int controlScheme = 0;                    /* D513 Input.ControlScheme: 0 Modern (port forces the style), 1 OG (the game's own selection is honoured) */
 static char padStr[MAX_PADS][PA_COUNT][32];      /* Input.Pad[N].<Action> */
 static char padStrKey[MAX_PADS][PA_COUNT][40];
@@ -2069,6 +2073,7 @@ static int inputCanUseGameplayActions(int menuMode)
  * from a gun selects the lowest gadget; the next press wraps the list. */
 static void inputCycleGadget(void)
 {
+    if (geNetPurePad) return;   /* G6: acts on game state directly; not online */
     if (inputMpSplit()) return;   /* D419: acts on g_CurrentPlayer; solo only */
     struct player *p = slotPlayer();
     if (!p || !p->ptr_inventory_first_in_cycle) return;
@@ -2120,7 +2125,7 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
     /* D194/D238: self-correcting every poll -- cheap (plain field writes,
      * see options.c cur_player_set_control_type), and re-asserts itself if
      * anything else ever calls the setter (menu, save load) in between. */
-    if ((idx == 0 || inputMpSplit()) && slotPlayer() != NULL &&
+    if (!geNetPurePad && (idx == 0 || inputMpSplit()) && slotPlayer() != NULL &&
         (idx == 0 || idx < getPlayerCount())) {   /* D416: each slot rewrites only its own player's style */
         int wantSolitare = stickSolitare(idx) ? CONTROLLER_CONFIG_SOLITARE_ : CONTROLLER_CONFIG_HONEY_;   /* D498, D518 */
         struct player *sp = slotPlayer();
@@ -2877,7 +2882,7 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
      * aim it also zooms on weapons that disable crouch. This is a PC input
      * adapter writing the same stance field the native game adjusts, not
      * a change to the N64 game logic. */
-    if (idx == 0 || inputMpSplit()) {
+    if (!geNetPurePad && (idx == 0 || inputMpSplit())) {   /* G6: no stance writes online */
         int stage = current_menu == GE_MENU_RUN_STAGE || current_menu == GE_MENU_INVALID;
         if (!stage) s_crouchLatch = 0;
         if (crouchMode == 1) {
@@ -3524,6 +3529,7 @@ static void swayFeedTheta(double deg)
 
 float portGunSwayTheta(float dt)
 {
+    if (geNetPurePad) return 0.0f;   /* G6: fed by the local mouse; not online */
     extern s32 get_cur_playernum(void);
     s32 pn = get_cur_playernum();
     int m = SDL_AtomicSet(&s_swayThetaMdeg[(pn > 0 && pn < 4) ? pn : 0], 0);
@@ -3673,6 +3679,7 @@ int portMouseAimPdActive(void)
 
 int portMouseAimPdGetTurn(f32 *tx, f32 *ty)
 {
+    if (geNetPurePad) return 0;   /* G6: the local mouse never reaches the game directly online */
     if (!portMouseAimPdActive() || g_CurrentPlayer == NULL)
         return 0;
     if (inputMpSplit() && player_num != 0)   /* D416: the mouse owns player 0 only */

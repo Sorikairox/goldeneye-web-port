@@ -20,6 +20,7 @@
 #include <stdlib.h>
 
 #include "webkernel.h"
+#include "webnet.h"
 #include "platform.h"
 #include "system.h"
 
@@ -259,9 +260,67 @@ static void wkPacingReport(double now)
     s_statDrop = s_dropped;
 }
 
+/* G6 det mode (geNetDetOn: an online session, an offline det run, a recording; webnet.c). Everything the
+ * game computes is indexed by retrace, never by browser frame or wall time:
+ *  - fibers run only inside a retrace, until every one of them blocks (no run on frames without a retrace);
+ *  - a busy-waiting fiber (SPIN) is parked until the next retrace, not the next browser frame;
+ *  - retrace N runs only when every session channel's input for N is there (geNetReady, the frame barrier);
+ *    otherwise the tick ends and the backlog is clamped to one period;
+ *  - the loop runs on a 4 ms timer (webkernelMainLoop), and the page can run a tick at once when the input a
+ *    stalled game waits for arrives (webkernelKick), or from a worker while the page is hidden.
+ * Wall time only decides WHEN a retrace runs (50 Hz pacing, time sync), never what it computes. */
+static int s_det, s_inFrame, s_halted;
+static double s_lastTickMs;
+static void wkDetRetrace(void)
+{
+    geNetRetraceStart();
+    for (int i = 0; i < WK_MAX_THREADS; i++)
+        if (s_threads[i].state == WK_SPIN) s_threads[i].state = WK_READY;
+    s_retraces++;
+    if (s_retrace) s_retrace();
+    wkRunReady();
+    geNetRetraceDone();
+}
+static void wkFrameDet(void)
+{
+    if (s_pump) s_pump();   /* SDL events: local devices and the window, no game state */
+    double now = emscripten_get_now();
+    if (s_nextRetraceMs == 0) s_nextRetraceMs = now;
+    if (s_lastTickMs) s_nextRetraceMs += geNetTakeSlowMs(now - s_lastTickMs);   /* time sync */
+    s_lastTickMs = now;
+    int due = 0;
+    extern int ge_rec_fast;
+    if (ge_rec_fast) {   /* replay at full speed: retraces back to back for ~12 ms per tick */
+        while (!s_halted && emscripten_get_now() - now < 12.0) wkDetRetrace();
+        s_nextRetraceMs = now;
+    }
+    while (!s_halted && now >= s_nextRetraceMs && due < 4) {
+        if (!geNetReady(geNetRetrace() + 1)) {
+            geNetStalled();
+            if (s_nextRetraceMs < now - s_periodMs) s_nextRetraceMs = now - s_periodMs;
+            break;
+        }
+        s_nextRetraceMs += s_periodMs;
+        due++;
+        wkDetRetrace();
+    }
+    if (now - s_nextRetraceMs > 4 * s_periodMs) {
+        s_dropped += (unsigned)((now - s_nextRetraceMs) / s_periodMs);
+        s_nextRetraceMs = now - s_periodMs;
+    }
+    wkPacingReport(now);
+}
+
 static void wkFrame(void)
 {
     s_frames++;
+    if (s_det) {
+        if (s_inFrame) return;
+        s_inFrame = 1;
+        wkFrameDet();
+        s_inFrame = 0;
+        return;
+    }
 
     /* Busy-waiting threads get another go this frame. */
     for (int i = 0; i < WK_MAX_THREADS; i++)
@@ -307,6 +366,7 @@ uint64_t webkernelPausedUs(void)
 }
 void webkernelSetPaused(int paused)
 {
+    if (s_det) return;   /* G6: a session never pauses silently; net.js ticks it from a worker while hidden */
     if (!!paused == s_paused) return;
     double now = emscripten_get_now();
     if (paused) {
@@ -330,9 +390,40 @@ void webkernelMainLoop(void (*pump)(void), void (*retrace)(void), unsigned perio
     s_pump = pump;
     s_retrace = retrace;
     s_periodMs = period_us / 1000.0;
-    sysLogPrintf(LOG_NOTE, "webkernel: main loop, retrace every %.3f ms", s_periodMs);
+    s_det = geNetDetOn;
+    sysLogPrintf(LOG_NOTE, "webkernel: main loop, retrace every %.3f ms%s", s_periodMs,
+                 s_det ? " (det: retrace-indexed fibers, 4 ms timer loop)" : "");
     emscripten_set_main_loop(wkFrame, 0, 0);
+    if (s_det) emscripten_set_main_loop_timing(EM_TIMING_SETTIMEOUT, 4);
 }
+
+/* G6: run a det tick now (the page got the input a stalled retrace waits for; or a worker tick while hidden). */
+void webkernelKick(void) { if (s_det) wkFrame(); }
+/* G6: stop running retraces (end of a recording's replay); the page reads the result. */
+void webkernelHalt(void) { s_halted = 1; }
+
+/* G6 state hash S: the live part of a game fiber's stacks (C stack from its saved stack pointer to the top,
+ * asyncify buffer -- the saved wasm locals of its call chain -- from its start to the saved position). Called
+ * between retraces: every fiber is suspended. */
+uint32_t geNetHashBytes(const void *p, uint32_t n, uint32_t seed);
+uint32_t webkernelStackHashPart(int which)   /* 1 = C stacks only, 2 = asyncify buffers only, 3 = both */
+{
+    uint32_t h = 0;
+    for (int i = 0; i < WK_MAX_THREADS; i++) {
+        WkThread *t = &s_threads[i];
+        if (t->state == WK_FREE || t->state == WK_DEAD) continue;
+        uintptr_t sp = (uintptr_t)t->fiber.stack_ptr, top = (uintptr_t)t->fiber.stack_base;
+        uintptr_t a0 = (uintptr_t)s_astack[i], a1 = (uintptr_t)t->fiber.asyncify_data.stack_ptr;
+        if ((which & 1) && sp >= (uintptr_t)s_cstack[i] && sp <= top) h = geNetHashBytes((const void *)sp, (uint32_t)(top - sp), h ^ (uint32_t)i);
+        if ((which & 2) && a1 >= a0 && a1 <= a0 + WK_A_STACK) h = geNetHashBytes((const void *)a0, (uint32_t)(a1 - a0), h ^ 0x100u ^ (uint32_t)i);
+        h ^= (uint32_t)t->state * 0x9E3779B1u + (uint32_t)t->id;
+    }
+    return h;
+}
+/* S = the asyncify buffers only: the C (shadow) stacks' live frames keep uninitialised slack written by earlier
+ * deeper calls (log formatting with wall-clock numbers, the renderer), which differs run to run without being game
+ * state (G6: two identical det runs differed in C stacks at 98 % of retraces, never in the asyncify buffers). */
+uint32_t webkernelStackHash(void) { return webkernelStackHashPart(2); }
 
 /* Guard (linked with -Wl,--wrap=emscripten_sleep): an ASYNCIFY sleep from inside a game fiber unwinds
  * the fiber as if it were the main loop and breaks the scheduler (G2's post-logo hang came from SDL's

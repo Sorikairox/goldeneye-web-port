@@ -65,6 +65,7 @@
  * this file sits in a `while (!condition)` loop, so an optimistic wake-up only
  * re-checks the condition. */
 #include "web/webkernel.h"
+#include "web/webnet.h"   /* G6 online lockstep / det mode (docs/web/ONLINE.md) */
 #define pthread_cond_wait(c, m)          webkernelWait(c)
 #define pthread_cond_timedwait(c, m, t)  (webkernelWait(c), 0)
 #define pthread_cond_signal(c)           webkernelSignal()
@@ -103,6 +104,9 @@ s32 osViClock   = 0;
 
 OSTime osGetTime(void)
 {
+#if defined(GE_WEB)
+    if (geNetDetOn) return (OSTime)geNetDetUs(1);   /* G6: det clock */
+#endif
     return (OSTime)sysGetMicroseconds();
 }
 
@@ -145,6 +149,7 @@ u32 osGetCount(void)
 {
 #if defined(GE_WEB)
     webkernelSpinCheck();   /* frametiming.c busy-waits on the counter */
+    if (geNetDetOn) return geNetDetCount(1);   /* G6: retrace x quantum + a tick per read */
 #endif
     if (g_determEnabled) {
         return g_determTicks;
@@ -1101,6 +1106,24 @@ static u8 g_contConnected = 0x1; /* controller 0 connected */
  * OSContPad / OSContStatus arrays joy.c reads via osContGetReadData(). */
 static void contSnapshotFromKeyboard(void)
 {
+#if defined(GE_WEB)
+    if (geNetSessionOn) {   /* G6: this retrace's inputs from the lockstep ring, presence = the session mask */
+        const s32 mask = geNetMask();
+        g_contConnected = (u8)mask;
+        for (int i = 0; i < MAXCONTROLLERS; ++i) {
+            unsigned b; int sx, sy;
+            const int connected = geNetPad(i, &b, &sx, &sy);
+            g_contStatus[i].type   = connected ? CONT_TYPE_NORMAL : 0;
+            g_contStatus[i].status = 0;   /* no Rumble Pak online (pads differ per machine) */
+            g_contStatus[i].errno  = connected ? 0 : CONT_NO_RESPONSE_ERROR;
+            g_contPad[i].button  = (u16)b;
+            g_contPad[i].stick_x = (s8)sx;
+            g_contPad[i].stick_y = (s8)sy;
+            g_contPad[i].errno   = connected ? 0 : CONT_NO_RESPONSE_ERROR;
+        }
+        return;
+    }
+#endif
     inputUpdate();
 
     const s32 mask = inputConnectedMask();
@@ -1130,6 +1153,9 @@ static void contSnapshotFromKeyboard(void)
 s32 osContInit(OSMesgQueue *mesgq, u8 *bitpattern, OSContStatus *data)
 {
     (void)data; /* the game passes its own array; osContGetQuery fills it */
+#if defined(GE_WEB)
+    if (geNetSessionOn) g_contConnected = (u8)geNetMask();   /* G6: the session's presence mask */
+#endif
     if (bitpattern) *bitpattern = g_contConnected;
     return 0;
 }
@@ -1185,6 +1211,11 @@ static void geEepromLoad(void)
 {
     if (s_eepromLoaded) return;
     s_eepromLoaded = 1;
+#if defined(GE_WEB)
+    /* G6: a session uses its own image (blank, or the host's once G5's seam lands: page -> ge_net_eeprom_buf),
+     * never this browser's save, and never writes it back (geEepromStore). */
+    if (geNetDetOn) { geNetEepromImage(s_eeprom, GE_EEP_SIZE); return; }
+#endif
     const char *path = sysResolvePath(GE_EEP_PATH);
     /* D514: before the game's first EEPROM read, convert an emulator-format
      * save in place (port/src/eepimport.c). Runs before fopen so the load
@@ -1203,6 +1234,9 @@ static void geEepromLoad(void)
 
 static void geEepromStore(void)
 {
+#if defined(GE_WEB)
+    if (geNetDetOn) return;   /* G6: sandboxed during a session */
+#endif
     const char *path = sysResolvePath(GE_EEP_PATH);
     FILE *fp = fopen(path, "wb");
     if (fp) {
@@ -1288,6 +1322,9 @@ s32 osPfsIsPlug(OSMesgQueue *queue, u8 *pattern)
 }
 s32 osMotorInit(OSMesgQueue *mq, OSPfs *pfs, int channel)
 {
+#if defined(GE_WEB)
+    if (geNetSessionOn) return PFS_ERR_NOPACK;   /* G6: no Rumble Pak online */
+#endif
     if (pfs && inputRumbleSupported(channel)) {
         pfs->queue = mq;
         pfs->channel = channel;
@@ -1564,6 +1601,15 @@ typedef struct PortTimer {
 
 static PortTimer g_ptimers[PORT_MAX_TIMERS];
 
+/* G6: timers run on the det clock in det mode (fire at a retrace, never at a wall time) */
+static uint64_t portTimerNowUs(void)
+{
+#if defined(GE_WEB)
+    if (geNetDetOn) return geNetDetUs(0);
+#endif
+    return sysGetMicroseconds();
+}
+
 /* cycles -> microseconds at the RSP counter rate. Inverse of
  * OS_USEC_TO_CYCLES(). */
 static uint64_t portCyclesToUs(OSTime cycles)
@@ -1591,7 +1637,7 @@ int osSetTimer(OSTimer *timer, OSTime start, OSTime period,
     pt->os = timer;
     pt->active = 1;
     pt->periodUs = (uint32_t)portCyclesToUs(period);
-    pt->fireUs = sysGetMicroseconds() + portCyclesToUs(start);
+    pt->fireUs = portTimerNowUs() + portCyclesToUs(start);
     sysLogPrintf(LOG_NOTE, "timer set: t=%p start=%lluus period=%uus mq=%p",
                  (void *)timer, (unsigned long long)portCyclesToUs(start),
                  pt->periodUs, (void *)mq);
@@ -1612,7 +1658,7 @@ int osStopTimer(OSTimer *timer)
 
 static void portServiceTimers(void)
 {
-    uint64_t now = sysGetMicroseconds();
+    uint64_t now = portTimerNowUs();
     int i;
     for (i = 0; i < PORT_MAX_TIMERS; ++i) {
         PortTimer *pt = &g_ptimers[i];

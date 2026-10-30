@@ -24,6 +24,7 @@
 static SDL_AudioDeviceID dev = 0;
 
 #if defined(GE_WEB)
+#include "web/webnet.h"   /* G6 det mode */
 /* Web: output through an AudioWorklet (port/src/web/webaudio.c) instead of SDL's deprecated
  * ScriptProcessor, unless GE_SDLAUDIO is set or AudioWorklet is missing. The device calls this file
  * makes are routed there; `dev` is a placeholder id while the worklet is in use. */
@@ -261,6 +262,17 @@ s32 audioGetSamplesBuffered(void)
 u32 audioGetAiLengthBytes(void)
 {
     u32 queued = dev ? SDL_GetQueuedAudioSize(dev) : 0;
+#if defined(GE_WEB)
+    /* G6 det mode: the regulator below reads a virtual queue that drains by retrace (webnet.c), never the
+     * browser's ring, so every peer's audio thread makes the same decisions. Same arithmetic as below. */
+    if (geNetDetOn) {
+        u32 q = geNetAiQueued(), last = geNetAiLast();
+        const u32 targetBytes = AUDIO_TARGET_FRAMES * 4u;
+        q = (q > targetBytes) ? (q - targetBytes) : 0u;
+        if (last && q > last) q = last;
+        return q;
+    }
+#endif
 
     /* D204/F5 -- shift the regulator's setpoint off zero. THIS is the part
      * that measurably changes behaviour.
@@ -480,6 +492,9 @@ void audioSetNextBuffer(const s16 *buf, u32 len)
         }
     }
 
+#if defined(GE_WEB)
+    if (geNetDetOn && buf && len) geNetAiPush(len, queueLimit);   /* G6: the virtual AI queue */
+#endif
     if (dev && buf && len) {
         if (audioGetSamplesBuffered() < queueLimit) {
             SDL_QueueAudio(dev, buf, len);

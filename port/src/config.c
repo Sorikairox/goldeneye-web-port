@@ -415,6 +415,10 @@ static void splitKey(const char *dotted, char *sec, int secSize, const char **le
 
 void configSave(void)
 {
+#if defined(GE_WEB)
+    extern int geNetDetOn;   /* G6: a session runs on the host's options; nothing is written back */
+    if (geNetDetOn) return;
+#endif
     const char *path = sysResolvePath(INI_PATH);
     FILE *f = fopen(path, "w");
     if (!f) {

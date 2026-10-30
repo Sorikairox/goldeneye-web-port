@@ -52,6 +52,11 @@ int webkernelPaused(void);
 /* Microseconds spent paused so far (sysGetMicroseconds subtracts it). */
 uint64_t webkernelPausedUs(void);
 
+/* G6 det mode (webnet.c): run a tick now / stop retraces / hash of the live fiber stacks */
+void webkernelKick(void);
+void webkernelHalt(void);
+uint32_t webkernelStackHash(void);
+
 /* libultra.c: a gfx task finished (pacing report). */
 void webkernelFrameRendered(void);
 
