@@ -1,5 +1,5 @@
 // G6 (from the Conker web port, P345): the room-code signaling server (Netlify Function v2 at /api/room) on Netlify Blobs; the logic is core.mjs.
-// Not deployed yet: a Netlify site needs the user's go-ahead (docs/web/ONLINE.md). Tests run core.mjs locally (scripts/web/roomserver.mjs).
+// Deployed with the site by scripts/web/deploy_web.sh (goldeneye-web-port.netlify.app/api/room). Tests run core.mjs locally (scripts/web/roomserver.mjs), never production.
 import { getStore } from '@netlify/blobs';
 import { httpHandle } from './core.mjs';
 
