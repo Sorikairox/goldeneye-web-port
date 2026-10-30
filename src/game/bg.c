@@ -234,7 +234,7 @@ u32 D_8004481C[] = {0x1000100, 0};
  * flexible array member `portallist[]`). C forbids initializing a flexible array
  * member in a nested context (an array element), which GCC enforces as a hard
  * error (IDO tolerated it). The code treats this data as a flat byte array
- * (cast to `u8*` at sub_GAME_7F0B37EC and walked byte-by-byte), so define it as
+ * (cast to `u8*` at bgMarkSpecialPortals and walked byte-by-byte), so define it as
  * such. The byte layout is identical. See docs/dev/findings.md. */
 u8 specialportalarray[] = {
     0x03, 0x2C,0x2E,0x32, 0x37,0x3E,0x3F,0x4E, 0x56,0x59,0x5D,0x72, 0x76,0x79,0x7A,0xFF,
@@ -335,7 +335,7 @@ void bgInit(void)
 }
 
 
-void sub_GAME_7F0B37EC(void) {
+void bgMarkSpecialPortals(void) /* was sub_GAME_7F0B37EC */ {
     u8 *ptr;
     u8 *end;
     u8 portal;
@@ -343,7 +343,15 @@ void sub_GAME_7F0B37EC(void) {
     u32 masked;
 
     ptr = (u8 *)specialportalarray;
+#ifdef PORT
+    /* G7 (porting-notes D5): the N64 build places g_BgCurrentRoom right after this array, so its address
+     * ends the walk. A PC linker need not: GCC on aarch64 Linux did not, and the walk ran on into other
+     * data and spun at level load. Use the array's own end (the same bound on the N64; wasm-ld happens to
+     * keep the two adjacent, so the web build walked the same bytes before). */
+    end = (u8 *)specialportalarray + sizeof(specialportalarray);
+#else
     end = (u8 *)&g_BgCurrentRoom;
+#endif
 
     do {
         if (levelentry_index == *ptr++) {
@@ -376,7 +384,11 @@ void sub_GAME_7F0B37EC(void) {
         }
 
         ptr++;
+#ifdef PORT
+    } while (ptr < end);   /* G7: full-width compare; (u32) of two host pointers is an N64 32-bit idiom */
+#else
     } while ((u32)ptr < (u32)end);
+#endif
 }
 
 
@@ -1056,7 +1068,7 @@ void load_bg_file(LEVEL_INDEX levelid)
             g_BgPortals[i].controlbytes1 &= 0xfe;
         }
  
-        sub_GAME_7F0B37EC();
+        bgMarkSpecialPortals();   /* was sub_GAME_7F0B37EC */
     }
  
     fogRemoved7F0BAA5C(levelid);

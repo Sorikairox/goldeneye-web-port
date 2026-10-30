@@ -744,6 +744,14 @@ if(EMSCRIPTEN)
     endif()
   endforeach()
 endif()
+# G7: a native aarch64 reference build (Linux arm64 in Docker on an Apple-silicon Mac, no emulation) needs the
+# same LP64 game-side fixes the web build gets: upstream gates them on __x86_64__ (see above). Off by default.
+option(GE_LP64_GAME_DEFINE "native non-x86 LP64 build: give the game TUs __x86_64__ like the web build" OFF)
+if(GE_LP64_GAME_DEFINE AND NOT EMSCRIPTEN)
+  set_property(SOURCE ${SRC_GAME} ${SRC_ENGINE} ${SRC_LIBAUDIO} ${SRC_LIBULTRARE_AUDIO}
+    ${SRC_GU} ${SRC_LIBULTRARE_DATA} ${SRC_LIBULTRARE_LIBC} ${SRC_ASSETS}
+    APPEND PROPERTY COMPILE_DEFINITIONS __x86_64__=1)
+endif()
 set(SRC
   ${SRC_ROMASSETS}        # first: the web build needs the cart window at GLOBAL_BASE
   ${SRC_GAME}

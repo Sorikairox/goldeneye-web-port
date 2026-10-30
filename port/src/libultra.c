@@ -490,6 +490,21 @@ static void *portAllocLowStack(size_t sz)
     if (p != MAP_FAILED)
         return p;
 #endif
+    /* G7: no MAP_32BIT outside x86-64 Linux (aarch64 Linux: the game thread got a glibc stack above 4 GiB and
+     * crashed in texReadBits on the first texture load). Ask for the low 2 GiB with address hints instead; a hint
+     * never replaces an existing mapping, and the result is checked. */
+    for (uintptr_t hint = 0x40000000u; hint + sz <= 0x80000000u; hint += 0x01000000u) {
+        void *q = mmap((void *)hint, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
+#if defined(MAP_STACK)
+                       | MAP_STACK
+#endif
+                       , -1, 0);
+        if (q == MAP_FAILED)
+            continue;
+        if ((uintptr_t)q + sz <= 0x80000000u)
+            return q;
+        munmap(q, sz);
+    }
     return NULL;
 }
 #endif
