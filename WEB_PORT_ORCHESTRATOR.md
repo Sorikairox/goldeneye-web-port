@@ -504,6 +504,15 @@ flash, controller pak).
 39. Scripted pads in sweeps: know what each button does once gameplay starts (an "intro skip" A
     cycled to grenades and Bond blew himself up in a lift; the stick's Y axis looked instead of
     walking). Read the screenshots before filing a bug. (GoldenEye G3)
+40. Browser saves lost at page close: an IndexedDB write begun in `beforeunload` may not finish, and the
+    game's own beforeunload (config write) runs after the page's listeners. Debounce writes while
+    running, flush when the tab is hidden, and on `pagehide` keep a synchronous localStorage copy of
+    anything still dirty that wins at the next start. (GoldenEye G5)
+41. Save import: switch the running game's persistence off before storing the imported image, or its
+    next write / the unload flush puts the old save back before the reload. Validate with the game's own
+    checksum code (in wasm), not just the size. (GoldenEye G5)
+42. Persistence tests with a probe that deletes its profile and SIGKILLs Chrome prove nothing: keep the
+    profile and close Chrome cleanly (CDP `Browser.close`). (GoldenEye G5)
 
 ---
 

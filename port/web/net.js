@@ -791,11 +791,14 @@
   let held = null;   // {rom, sum, go}: the game waiting for a session config (or "Play offline")
   N.go = null;
   // main.js start(): returns true while the game must not start yet (online on, no session configured)
+  // the session's EEPROM: the host's image (or blank) through G5's seam, never persisted (saves.js)
+  N.sandbox = (bytes) => { if (window.GESaves) window.GESaves.sandbox(bytes && bytes.length === 2048 ? bytes : null); };
   N.hold = function (rom, sum, go) {
     if (!N.enabled || N.cfg || N.goNow) return false;
     if (Q.has('rec') || Q.has('replay')) {   // input recorder (below): a one-player det session, starts at once
       N.cfg = { rec: Q.has('rec') ? 1 : 2, script: Q.has('recscript'), offline: true, mask: 1, local: 1, delay: 0, hashEvery: 0 };
       N.recRomSha = sha256hex(rom);
+      N.sandbox(null);
       return false;
     }
     if (Q.has('netdet') || Q.has('netloop')) {   // offline test runs start at once
@@ -803,6 +806,7 @@
       N.cfg = Q.has('netdet')
         ? { mask, local: mask, delay: +(Q.get('netd') || 1), hashEvery: +(Q.get('nethashevery') || 1), script: true, offline: true }
         : { mask, local: 1, delay: +(Q.get('netd') || 3), hashEvery: +(Q.get('nethashevery') || 10), loop: { lat: +(Q.get('netlat') || 0), loss: +(Q.get('netloss') || 0) } };
+      N.sandbox(null);
       return false;
     }
     held = { rom, sum, go };
@@ -827,7 +831,9 @@
     const cfg = N.cfg;
     // options: the host's ini (written where configLoad reads it; every peer the same file; never saved back)
     try { M.FS.writeFile('/data/ge007.ini', cfg.ini || ''); } catch (e) { N.log('[net] ini: ' + e); }
-    if (cfg.eeprom && cfg.eeprom.length) M.HEAPU8.set(cfg.eeprom.subarray(0, 2048), M._ge_net_eeprom_buf() >>> 0);
+    // EEPROM: G5's seam (saves.js GESaves.sandbox, set in N.sandbox before restore()) already loaded the host's image
+    // or a blank one; without saves.js, the host's image goes to the det fallback buffer
+    if (!window.GESaves && cfg.eeprom && cfg.eeprom.length) M.HEAPU8.set(cfg.eeprom.subarray(0, 2048), M._ge_net_eeprom_buf() >>> 0);
     try {   // hashed ranges of the game state (scripts/web/netregions.py)
       let n = 0;
       for (const l of (await (await fetch('ge007.netregions')).text()).split('\n')) {
@@ -835,6 +841,7 @@
         if (f[0] === 'R') { M._ge_net_region_add(parseInt(f[1], 16), parseInt(f[2], 16)); n++; }
       }
       if (!n) N.log('[net] ge007.netregions has no ranges: only the N64 DRAM is hashed');
+      if (M._ge_web_eeprom_image) M._ge_net_region_add(M._ge_web_eeprom_image() >>> 0, 2048);   // the live EEPROM image (libultra.c)
     } catch (e) { N.log('[net] ge007.netregions not loaded (' + e + '): only the N64 DRAM is hashed'); }
     if (cfg.rec) return recBegin(M, cfg);
     N.begin(M, cfg);
@@ -846,9 +853,10 @@
   document.addEventListener('visibilitychange', () => { if (N.cfg && !N.cfg.offline && N.M && N.background) N.background(document.hidden); });
 
   // the host's session config (sessionFn of N.host / N.roomCreate)
-  // G5 seam: once saves persist, hostEeprom() returns this browser's EEPROM image and hostIni() its ge007.ini text
-  // (the session uses them sandboxed: never written back). Until then a session uses a blank EEPROM and the defaults.
-  N.hostEeprom = async () => null;
+  // G5 seam (saves.js): hostEeprom() = the host's stored EEPROM image (sent to every guest, used sandboxed: never
+  // written back). Options: GESaves.sandbox does not restore any ini, so every peer boots with the default config
+  // (hostIni() = ''); sending the host's ini is ready (cfg.ini) once saves.js exposes it.
+  N.hostEeprom = async () => (window.GESaves ? window.GESaves.image() : null);
   N.hostIni = async () => '';
   async function sessionConfig({ ping, mask }) {
     const auto = Q.get('netd') ? Q.get('netd') === 'auto' : $('net-delay-auto').checked;
@@ -863,6 +871,7 @@
     if (Q.get('roomapi')) N.roomApi = Q.get('roomapi');
     if (!T.on.config) T.on.config = (cfg) => {   // every peer: boot the game into the session
       N.cfg = cfg;
+      N.sandbox(cfg.eeprom);
       netStatus('starting the game…', 'ok');
       held.go();
     };

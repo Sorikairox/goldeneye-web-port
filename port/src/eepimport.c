@@ -133,3 +133,27 @@ int geEepImportEmulatorSave(const char *path)
                  converted, backup);
     return converted;
 }
+
+#if defined(GE_WEB)
+#include <stdint.h>
+/* Web save import (port/web/saves.js): is this 2048-byte file a GoldenEye EEPROM image? Checks the six
+ * checksummed regions (block 0 + the five save_data slots) with the game's own CRC, in port format and
+ * in emulator (big-endian) format. Returns -1 for a wrong size, else bit i (0..5) = region i valid in
+ * port format, bit 8+i = valid in emulator format (converted on the next boot by
+ * geEepImportEmulatorSave). The page accepts a file with at least one valid region; the game wipes the
+ * invalid ones, as it does on the N64. */
+__attribute__((used, visibility("default"))) int ge_web_eep_check(uint32_t addr, uint32_t len)
+{
+    if (len != EEP_SIZE) return -1;
+    u8 buf[EEP_SIZE];
+    memcpy(buf, (const void *)(uintptr_t)addr, EEP_SIZE);
+    int mask = 0;
+    for (int i = 0; i < 6; i++) {
+        const int len_ = (i == 0) ? (int)sizeof(smallSave) : (int)sizeof(save_data);
+        u8 *r = buf + (i == 0 ? 0 : 32 + (i - 1) * (int)sizeof(save_data));
+        if (eepRegionValid(r, len_, 0)) mask |= 1 << i;
+        if (eepRegionValid(r, len_, 1)) mask |= 1 << (8 + i);
+    }
+    return mask;
+}
+#endif

@@ -33,12 +33,16 @@ for (let waited = 0; ; waited++) {
 }
 const unlock = () => { if (!ownLock) return; try { if (fs.readFileSync(LOCK, 'utf8').trim() === String(process.pid)) fs.unlinkSync(LOCK); } catch (e) {} };
 process.on('exit', unlock);
-const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'ge-probe-'));
+// PROBE_USERDIR=<dir>: use (and keep) this Chrome profile instead of a fresh temporary one, so IndexedDB /
+// localStorage survive into the next run (save persistence tests); the default is a fresh profile per run
+const keepProf = !!process.env.PROBE_USERDIR;
+if (keepProf) fs.mkdirSync(process.env.PROBE_USERDIR, { recursive: true });
+const prof = keepProf ? path.resolve(process.env.PROBE_USERDIR) : fs.mkdtempSync(path.join(os.tmpdir(), 'ge-probe-'));
 const port = 9400 + (process.pid % 400);
 const ch = spawn(CH, ['--headless=new', `--user-data-dir=${prof}`, `--remote-debugging-port=${port}`,
   '--mute-audio', '--autoplay-policy=no-user-gesture-required', `--use-angle=${process.env.PROBE_ANGLE || 'swiftshader'}`, '--enable-unsafe-swiftshader',
   '--window-size=800,900', 'about:blank'], { stdio: 'ignore' });
-const done = (code) => { try { ch.kill('SIGKILL'); } catch (e) {} try { fs.rmSync(prof, { recursive: true, force: true }); } catch (e) {} process.exit(code); };
+const done = (code) => { try { ch.kill('SIGKILL'); } catch (e) {} if (!keepProf) try { fs.rmSync(prof, { recursive: true, force: true }); } catch (e) {} process.exit(code); };
 for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => done(130));
 // the console is streamed to <outdir>/console.log as it arrives (with seconds since navigation), so a
 // hung page still leaves its last lines behind
@@ -168,5 +172,11 @@ if (sheet.length > 1 && !process.env.PROBE_NOSHEET) {
   await sleep(500);
   const r = await Promise.race([call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }), sleep(10000).then(() => null)]);
   if (r?.result?.data) { fs.writeFileSync(path.join(outdir, 'sheet.png'), Buffer.from(r.result.data, 'base64')); console.log('probe: contact sheet ' + path.join(outdir, 'sheet.png')); }
+}
+// a kept profile: close Chrome cleanly so it writes IndexedDB / localStorage to disk (SIGKILL may drop them)
+if (keepProf) {
+  const exited = new Promise((r) => ch.once('exit', r));
+  try { call('Browser.close'); } catch (e) {}
+  await Promise.race([exited, sleep(8000)]);
 }
 done(0);

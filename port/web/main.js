@@ -6,7 +6,8 @@
 //    cache or convert them from the ROM in wasm (port/src/convert/geconv.c, progress shown), and write
 //    them into /data/ where the game loads them (docs/web/ROMDATA.md);
 //    dev only: ?assets=URL fetches Python-generated sidecars from a local server instead;
-// 3. call main().
+// 3. restore the player's save and config from IndexedDB into /data (saves.js; export / import there);
+// 4. call main().
 'use strict';
 const EU_SHA1 = '167c3c433dec1f1eb921736f7d53fac8cb45ee31';
 const ROM_NAME = 'ge007.pal-final.z64';
@@ -20,6 +21,7 @@ function log(s) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 function status(s) { statusEl.textContent = s; }
+window.geLog = log;   // saves.js logs through the page log
 
 // --- ROM handling -------------------------------------------------------------------------------
 function toZ64(buf) {
@@ -191,12 +193,15 @@ async function start(rom, romsum) {
       } finally {
         M._ge_web_free(romp);
       }
+      // saves (saves.js): the stored EEPROM image and config back into /data before the game reads them
+      await window.GESaves.restore(M, romsum);
       FS.chdir('/');
       status('');
       log('[page] calling main()');
       // ?args=-level_09+-foo passes command-line arguments (as on native)
       let args = (params.get('args') || '').split(/[ +]/).filter(Boolean);
       if (window.GENet) { args = GENet.args(args); await GENet.beforeMain(M); }   // G6: online session setup
+      window.geMainCalled = true;
       try { Module.callMain(args); } catch (e) { if (e !== 'unwind') { log('[page] main threw: ' + e); throw e; } }
     },
   };

@@ -11,6 +11,11 @@
   canvas#canvas { background: #000; width: 640px; height: 480px; max-width: 100%; image-rendering: pixelated; }
   #rompick { padding: 12px; border: 1px solid #444; border-radius: 6px; }
   #status { min-height: 1.2em; }
+  #saves { width: 640px; max-width: 100%; padding: 8px 12px; border: 1px solid #333; border-radius: 6px; box-sizing: border-box; }
+  #saves button, #saves label.btn { margin-right: 6px; }
+  #saves label.btn { display: inline-block; padding: 1px 6px; border: 1px solid #767676; border-radius: 3px; background: #333; cursor: pointer; }
+  #saves label.btn input { display: none; }
+  #save-status { color: #ddd; }
   #log { width: 640px; max-width: 100%; height: 160px; overflow: auto; font: 11px monospace; color: #8a8; white-space: pre-wrap; }
 </style>
 </head>
@@ -24,8 +29,20 @@
   <div id="status"></div>
   <progress id="progress" style="display:none; width: 320px"></progress>
   <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  <div id="saves">
+    <b>Save</b>
+    <button id="save-export" disabled>Export save (.eep)</button>
+    <label class="btn" id="save-import-label">Import save… <input type="file" id="save-import" accept=".eep,.bin,.sav" disabled></label>
+    <button id="save-delete" disabled>Delete save</button>
+    <div id="save-status"></div>
+    <div><small>Your progress and settings are stored only in this browser, for this ROM (IndexedDB). Clearing the
+      site's data deletes them, and other browsers or devices do not see them: export the save to keep a copy or
+      to move it. Import accepts a 2048-byte GoldenEye EEPROM file (this page's export, the PC port's
+      <code>ge007.eep</code>, or an emulator's <code>.eep</code>); the game restarts with it.</small></div>
+  </div>
   <div id="log"></div>
 </div>
+<script src="saves.js"></script>
 <script src="net.js"></script>
 <script src="main.js"></script>
 </body>

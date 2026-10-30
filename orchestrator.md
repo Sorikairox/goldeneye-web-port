@@ -4,7 +4,7 @@ Playbook: `WEB_PORT_ORCHESTRATOR.md` (lessons from the Conker web port). This fi
 it, don't append history) and the rules specific to this repo. Session history: `docs/web/HANDOFF.md` and
 `docs/web/sessions.tsv`.
 
-## 1. Status snapshot (2026-10-30, after G3 + G4)
+## 1. Status snapshot (2026-10-30, after G3 + G4 + G5)
 
 - **Goal:** GoldenEye 007 running in a web browser (WebAssembly), from readable C, for a player who owns the
   **EU (PAL) ROM**. Later: features (each optional) and online multiplayer, as in the Conker port.
@@ -19,8 +19,9 @@ it, don't append history) and the rules specific to this repo. Session history: 
   (`docs/web/LEVELS.md`). Page: AudioWorklet audio, hidden-tab pause, clean unload, Gamepad API pad
   works (fake pad); pointer lock / real pads / audio by ear need a human. G4: sidecars converted in the
   browser (C port of the converters, IndexedDB cache) and ROM data stripped from the wasm (template +
-  fill at boot, `deploy_check.sh` gate). Open: Egypt / MP dark-or-grey surfaces (native reference
-  needed), saves persistence (W4). How to build/run/test: `docs/web/HANDOFF.md`.
+  fill at boot, `deploy_check.sh` gate). G5: saves persist in IndexedDB per ROM SHA-1
+  (export/import in the page, `?nosave`, online sandbox seam `GESaves.sandbox`). Open: Egypt / MP
+  dark-or-grey surfaces (native reference needed). How to build/run/test: `docs/web/HANDOFF.md`.
 - **EU-only:** confirmed — the PAL build, the sidecar converters and the game need only the EU ROM.
 - **Tooling:** Docker images `goldeneye-emsdk`, `goldeneye-linux-amd64` (native reference build), containers
   `goldeneye-dev` (build, `--cpus=4`, build tree in volume `goldeneye-dev-build`), `goldeneye-web-serve`

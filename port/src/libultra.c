@@ -1207,20 +1207,55 @@ s32 osContReset(OSMesgQueue *mq, OSContStatus *status)
 static u8   s_eeprom[GE_EEP_SIZE];
 static int  s_eepromLoaded = 0;
 
+#if defined(GE_WEB)
+/* Web saves (port/src/web/websave.c, port/web/saves.js): every store of the image notifies the page,
+ * which copies /data/ge007.eep to IndexedDB (debounced, flushed on page hide). For an online session
+ * the page loads the host's image from bytes and sandboxes it (ge_web_eeprom_load +
+ * ge_web_save_sandbox): stores then stay in s_eeprom only. */
+#define WEBSAVE_EEPROM 1
+extern void webSaveWritten(int what);
+extern int  webSaveSandboxed(void);
+extern int  geEepImportEmulatorSave(const char *path); /* port/src/eepimport.c (D514) */
+
+/* Replace the EEPROM image with `len` bytes at `addr` (rest zero); counts as loaded, so the game's
+ * first read sees exactly these bytes and /data/ge007.eep is not read. Call before the game's first
+ * EEPROM access (before main()): the game copies the saves into its own RAM at boot. */
+__attribute__((used, visibility("default"))) int ge_web_eeprom_load(uint32_t addr, uint32_t len)
+{
+    if (len > GE_EEP_SIZE) return -1;
+    memset(s_eeprom, 0, GE_EEP_SIZE);
+    if (len) memcpy(s_eeprom, (const void *)(uintptr_t)addr, len);
+    s_eepromLoaded = 1;
+    sysLogPrintf(LOG_INFO, "eeprom: image of %u bytes loaded by the page", (unsigned)len);
+    return 0;
+}
+/* The live image (e.g. for a session hash or export); GE_EEP_SIZE bytes. */
+__attribute__((used, visibility("default"))) uint32_t ge_web_eeprom_image(void)
+{
+    return (uint32_t)(uintptr_t)s_eeprom;
+}
+#endif
+
 static void geEepromLoad(void)
 {
     if (s_eepromLoaded) return;
     s_eepromLoaded = 1;
 #if defined(GE_WEB)
-    /* G6: a session uses its own image (blank, or the host's once G5's seam lands: page -> ge_net_eeprom_buf),
-     * never this browser's save, and never writes it back (geEepromStore). */
+    /* G6: a det run never reads this browser's save. A session's page hands the host's image (or a blank one)
+     * through G5's sandbox seam before main() (GESaves.sandbox -> ge_web_eeprom_load marks it loaded, so this is
+     * not reached); without it (offline det runs, recordings) the image is blank. Never written back. */
     if (geNetDetOn) { geNetEepromImage(s_eeprom, GE_EEP_SIZE); return; }
 #endif
     const char *path = sysResolvePath(GE_EEP_PATH);
     /* D514: before the game's first EEPROM read, convert an emulator-format
      * save in place (port/src/eepimport.c). Runs before fopen so the load
      * below sees the converted bytes; no-op for a port-format save. */
+#if defined(GE_WEB)
+    if (geEepImportEmulatorSave(path) > 0)
+        webSaveWritten(WEBSAVE_EEPROM);   /* the converted image goes to IndexedDB (port/src/web/websave.c) */
+#else
     geEepImportEmulatorSave(path);
+#endif
     FILE *fp = fopen(path, "rb");
     if (fp) {
         fread(s_eeprom, 1, GE_EEP_SIZE, fp);
@@ -1235,13 +1270,18 @@ static void geEepromLoad(void)
 static void geEepromStore(void)
 {
 #if defined(GE_WEB)
-    if (geNetDetOn) return;   /* G6: sandboxed during a session */
+    /* online-session sandbox (websave.c): the image lives in RAM only, never in /data or IndexedDB;
+     * G6: any det run (session, offline det run, recording) never writes back either */
+    if (geNetDetOn || webSaveSandboxed()) return;
 #endif
     const char *path = sysResolvePath(GE_EEP_PATH);
     FILE *fp = fopen(path, "wb");
     if (fp) {
         fwrite(s_eeprom, 1, GE_EEP_SIZE, fp);
         fclose(fp);
+#if defined(GE_WEB)
+        webSaveWritten(WEBSAVE_EEPROM);   /* page: debounced copy of /data/ge007.eep to IndexedDB */
+#endif
     } else {
         sysLogPrintf(LOG_ERROR, "eeprom: cannot write %s", path);
     }
