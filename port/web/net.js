@@ -888,13 +888,14 @@
 #ge-online textarea { width: 100%; font: 11px monospace; }
 #ge-online .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
 #ge-online .netslot { border: 1px solid #444; border-radius: 4px; padding: 4px; margin: 4px 0; }
+#ge-online [hidden] { display: none !important; }
 #ge-online .ok { color: #8c8; } #ge-online .bad { color: #e88; }
 #net-room-show { font: bold 22px monospace; letter-spacing: 3px; }
 #netwait { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #000c; padding: 6px 12px; border-radius: 4px; }
 </style>
 <label><input type="checkbox" id="net-enable"> Online multiplayer (experimental)</label>
 <div id="net-panel" hidden>
-  <div class="row"><button id="net-room-create">Create room (player 1)</button> or
+  <div class="row" id="net-start-row"><button id="net-room-create">Create room (player 1)</button> or
     <input id="net-room-code" size="7" placeholder="CODE"> <button id="net-room-join">Join room</button>
     <button id="net-offline">Play offline</button></div>
   <div id="net-room-box" class="row" hidden>Room code: <span id="net-room-show"></span> <button id="net-room-copy">Copy</button>
@@ -987,6 +988,7 @@
   T.on.status = (s, cls) => {
     netStatus(s, cls);
     if (/^(connected|joined as|you are player)/.test(s) || T.started) { $('net-step-join').hidden = true; $('net-leave').hidden = false; }
+    if (T.started) { $('net-start-row').hidden = true; $('net-manual-box').hidden = true; if (T.role !== 'host') $('net-room-box').hidden = true; }
   };
   let waitSince = 0, lastInfo = 0;
   T.on.tick = (t) => {   // ~200 Hz from the pump

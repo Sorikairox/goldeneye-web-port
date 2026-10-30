@@ -166,7 +166,7 @@ await (async () => {
   const ts = Date.now();
   if (process.env.UI) { await host.ev("document.getElementById('net-start').click()"); }
   else await host.ev('__online.start()');
-  console.log(`netgroup: started (${Date.now() - ts} ms), routes ${JSON.stringify(await host.ev('PortNet.t.routes'))}; visibility ` +
+  console.log(`netgroup: started (${Date.now() - ts} ms), routes ${JSON.stringify(await host.ev('GENet.t.routes'))}; visibility ` +
     (await Promise.all(NAMES.map((n) => pages[n].ev('document.visibilityState')))).join(' '));
   const [hideAt, hideFor] = (process.env.HIDE || '').split(':').map(Number);
   let hideState = 0, coverId = null, winId = null;
