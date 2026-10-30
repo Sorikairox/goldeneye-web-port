@@ -3,7 +3,11 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3, 2026-10-30)
+## Current state (after G3 + G4 + G5, 2026-10-30)
+
+G5: saves persist in IndexedDB with export / import and an online sandbox seam (section "Saves in the
+browser" below).
+
 
 G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
 - **All 20 solo missions and the ending (Cuba) load, render and play** by warp (`-level_XX`, Agent):
@@ -26,6 +30,48 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## Saves in the browser (G5, 2026-10-30)
+
+- **Persistence (on by default):** the game keeps `ge007.eep` (2048-byte EEPROM image, native format)
+  and `ge007.ini` in MEMFS `/data` as before. After every write the C side calls
+  `webSaveWritten()` (`port/src/web/websave.c`; hooks in `libultra.c geEepromStore`, `config.c
+  configSave`, and after an emulator save was converted at load) -> `Module.geSaveWritten` ->
+  `port/web/saves.js` marks the file dirty and copies it to IndexedDB (`ge007-web`/`files`, keys
+  `save-<ROM SHA-1>/ge007.eep` and `.../ge007.ini`) 400 ms after the last write of a burst; at once
+  when the tab is hidden; on `pagehide` (after beforeunload's configSave) dirty files also go
+  synchronously to localStorage `ge007-pending-<sha1>`, which wins at the next start. `restore()` runs
+  in `onRuntimeInitialized` before `callMain`, so the game's first EEPROM read and `configLoad` see
+  the stored copies. Storage unreadable (4 s timeout) -> saving off for that page load (a blank save
+  never overwrites a real one). `?nosave`: nothing restored or stored (Conker had no such flag).
+- **Export / import / delete** (Save box under the picture; it says the save lives only in this
+  browser): export = the EEPROM image as `goldeneye-eu.eep` (= the PC port's `data/ge007.eep`).
+  Import = exactly 2048 bytes and at least one of the six checksummed regions valid with the game's own
+  CRC in port or emulator byte order (`ge_web_eep_check`, `port/src/eepimport.c`; emulator saves are
+  converted at boot by the existing D514 code); then persistence is switched off for the running game,
+  the file is stored and the page reloads. Config is not exported.
+- **Proof** (`scripts/web/save_test.sh`, 4 runs by the real route to Dam, kept Chrome profiles): Auto-Aim
+  ON -> OFF in the watch, watch closed -> EEPROM stored (`fileClearSavefileForFolder` writes the
+  folder's options); reload -> the watch shows OFF; export (2048 B) -> fresh profile: a 100-byte file
+  and 2048 bytes of 0xFF are refused, the export is accepted, page reloads, the watch shows OFF; a
+  sandboxed run boots with a blank image (watch: ON) and stores nothing (IndexedDB SHA-1 unchanged).
+  The file-select screen shows no progress for options-only saves (no mission was finished: Dam's
+  objectives are too long to script).
+- **Online seam for G6** (playbook 10.2 item 8): `GESaves.sandbox(bytes | null)` — call it before the
+  page calls `main()` (e.g. right when the session config arrives, before `start()`): the game boots
+  with exactly those 2048 bytes (null = blank) through `ge_web_eeprom_load`, `ge_web_save_sandbox(1)`
+  keeps every EEPROM write in wasm RAM (no `/data` file, no notification), the page stores nothing and
+  does not restore the player's ini either (default config) for the rest of the page load; end the
+  session with a reload. `await GESaves.image()` = the player's stored image (what a host sends);
+  `Module._ge_web_eeprom_image()` = the live 2048-byte image (for a state hash). Called after `main()`
+  it still sandboxes but logs that the game may already have read its EEPROM.
+- Note: on a fresh profile the port's `watchsettings` builds a blank file 1 at boot, so a save is
+  stored within seconds of the first start.
+
+```sh
+GE_PORT=8771 scripts/web/save_test.sh [port_work/save-test]   # PASS/FAIL per step; look at the watch shots it names
+PROBE_USERDIR=<dir> node scripts/web/probe.mjs ...            # keep a Chrome profile across runs (IndexedDB survives)
+```
 
 ## State after G2 (2026-10-29)
 
@@ -171,7 +217,19 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
 | test scripts | `scripts/web/{level_sweep,mp_sweep,route_dam}.sh`, `probe.mjs`, `fakepad.js`, `audiocheck.js` |
 | sidecar converters (C) | `port/src/convert/geconv.{c,h}`; page glue `port/src/web/geconvweb.c`; inputs `scripts/web/gen_geconv_inputs.py` → `build-web/geconv_inputs.c`; native-style check tool `tools_web/geconv_cli.c` |
 | template + fill | build: `tools_web/romfill.c` via `scripts/web/romfill.sh`; boot: `port/src/web/romfill.c`; checks `scripts/web/fillcheck.py` |
+| saves (G5) | C: `port/src/web/websave.c`, `GE_WEB` blocks in `port/src/libultra.c` (EEPROM), `config.c`, `eepimport.c` (`ge_web_eep_check`); page: `port/web/saves.js` (`GESaves`), Save box in `index.html`; test `scripts/web/save_test.sh` |
 | deploy gate | `tools_web/romscan.c`, `tools_web/romscan_attr.py`, `scripts/web/romscan.{sh,allow}`, `scripts/web/deploy_check.sh` |
+
+## Traps found in G5
+- An IndexedDB write started while the page closes may never complete; `beforeunload` listeners run
+  in registration order, and the game's own (config write) is registered after the page's. Hook
+  `pagehide` (after every beforeunload) and keep a synchronous localStorage copy of what is still dirty.
+- An import must switch the running game's persistence off before storing: otherwise its next save,
+  or the unload flush, writes the old save over the imported one before the reload.
+- Persistence tests need a kept Chrome profile and a clean `Browser.close` (probe.mjs
+  `PROBE_USERDIR`): the default probe deletes its profile and SIGKILLs Chrome.
+- `indexedDB.open` connections that are never closed block `deleteDatabase` and version upgrades;
+  saves.js closes each connection after its transaction (main.js's ROM / sidecar helpers still do not).
 
 ## Traps found in G4
 - Sourcing `env.sh` from zsh: `BASH_SOURCE` is empty, GE_ROOT became `$HOME` and the whole home
@@ -257,8 +315,20 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
 - Det mode (`GE_DETERM`) not tried on the web; sweeps are wall-clock with random AI/intros.
 - Solo warps into MP-only stages trap (not a game path, LEVELS.md); Citadel warp loops.
 - 2.06 GiB initial memory (desktop only).
-- `route_dam.sh`'s in-level `SUP` looks down instead of walking (stick Y looks in the port's default
-  control style); `CUPHOLD`/`CNONE` walks (level_sweep.sh uses it).
+- swiftshader: in route_dam.sh, after Bond walks forward (C-up since G5) and faces the Dam,
+  retraces drop to ~25/s with ~9 browser frames/s (heavy view in software GL; before G5 the walk looked
+  at the ground). With `PROBE_ANGLE=metal` the same route holds 50.0 retraces/s throughout
+  (`port_work/g5/route-dam-metal`): a software-GL cost, not a game or save problem.
+- Saves: real-browser checks by a human (download dialog of Export, the file picker, closing the tab
+  right after a save, private windows / blocked storage); a mission-completion save shown on the
+  file-select screen was not scripted.
+
+## Next session — recommended (after G5)
+1. G6 (online): use `GESaves.sandbox(hostImage)` before `main()` (seam above); hash
+   `_ge_web_eeprom_image()` at session start on every peer.
+2. Human pass in a real browser: export download, import file picker, close the tab right after
+   a save then reopen, private window.
+3. Optional: a "Settings" export (ge007.ini) next to the save, and save slots like Conker's `?slot=`.
 
 ## Next session — recommended (after G3)
 1. A same-machine native reference: arm64 native Linux build in Docker (no emulation; game TUs need the

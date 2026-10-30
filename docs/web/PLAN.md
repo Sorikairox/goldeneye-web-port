@@ -153,6 +153,9 @@ fibers support it by then.
   Pointer lock for mouse aim needs a click.
 - **Files:** Emscripten MEMFS at `/data` (`$S/` resolves to `data/`). Saves/config: mount **IDBFS** on
   `/data/save` (or sync `ge007.eep`/`ge007.ini` to IndexedDB on write), with export/import in the page.
+  **Done (G5):** sync on write (C notifies the page after each write; debounced IndexedDB copy per ROM
+  SHA-1, flush on hide, localStorage copy on pagehide), export/import with a game-CRC check, `?nosave`,
+  online sandbox `GESaves.sandbox()` (HANDOFF "Saves in the browser").
 - **ROM:** page file picker → byte-order normalisation (z64/v64/n64) → SHA-1 must be the EU ROM →
   IndexedDB → MEMFS `/data/ge007.pal-final.z64` → `romdata.c` copies it into the cart window.
 
