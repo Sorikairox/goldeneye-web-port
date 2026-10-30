@@ -461,4 +461,10 @@ void configSave(void)
 
     fclose(f);
     sysLogPrintf(LOG_INFO, "config: wrote %s", path);
+#if defined(GE_WEB)
+    {   /* page: debounced copy of /data/ge007.ini to IndexedDB (port/src/web/websave.c) */
+        extern void webSaveWritten(int what);
+        webSaveWritten(2 /* WEBSAVE_CONFIG */);
+    }
+#endif
 }
