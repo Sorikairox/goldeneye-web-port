@@ -30,8 +30,11 @@ fi
 B="http://localhost:${GE_PORT:-8772}/app/index.html?romurl=../dev/ge007.pal-final.z64&online=1&nethashevery=${HASHEVERY:-1}&netd=${NETD:-auto}&env=GE_NETSCRIPT=1&env=GE_NETHASHLOG=1&env=GE_NETPAD0=$PAD0&env=GE_NETPAD1=$PAD1&env=GE_NETPAD2=$PAD2&env=GE_NETPAD3=$PAD3$ROOMQ"
 FA=${NETFAIL%-*}; FB=${NETFAIL#*-}
 fail() { [ -n "${NETFAIL:-}" ] && { [ "$1" = "$FA" ] && echo "&netfailto=$FB"; [ "$1" = "$FB" ] && echo "&netfailto=$FA"; }; }
+# G8: GUEST_TOUCH=1: the guest plays with the on-screen touch controls (&touch=1, its live pad instead of the GE_NETPAD1
+# script); GUEST_EVALS (netgroup.mjs) presses them, e.g. scripts/web/touchpress.js
+GB=$B; [ -n "${GUEST_TOUCH:-}" ] && GB="${B//&env=GE_NETSCRIPT=1/}&touch=1"
 URLS=("$B${NETSIM_HOST:+&netsim=$NETSIM_HOST}"
-      "$B${NETSIM_GUEST:+&netsim=$NETSIM_GUEST}${DESYNC_AT:+&env=GE_NETDESYNC=$DESYNC_AT}$(fail 2)"
+      "$GB${NETSIM_GUEST:+&netsim=$NETSIM_GUEST}${DESYNC_AT:+&env=GE_NETDESYNC=$DESYNC_AT}$(fail 2)"
       "$B${NETSIM_GUEST3:+&netsim=$NETSIM_GUEST3}$(fail 3)"
       "$B${NETSIM_GUEST4:+&netsim=$NETSIM_GUEST4}$(fail 4)")
 NAMES=(host guest guest3 guest4)
