@@ -2,13 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <title>GoldenEye 007 (web port, dev)</title>
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; background: #000; color: #ccc; font: 14px system-ui, sans-serif; }
   #wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px; }
-  canvas#canvas { background: #000; width: 640px; height: 480px; max-width: 100%; image-rendering: pixelated; }
+  canvas#canvas { background: #000; width: 640px; height: auto; aspect-ratio: 4 / 3; max-width: 100%; image-rendering: pixelated; }
   #rompick { padding: 12px; border: 1px solid #444; border-radius: 6px; }
   #status { min-height: 1.2em; }
   #saves { width: 640px; max-width: 100%; padding: 8px 12px; border: 1px solid #333; border-radius: 6px; box-sizing: border-box; }
@@ -16,7 +18,47 @@
   #saves label.btn { display: inline-block; padding: 1px 6px; border: 1px solid #767676; border-radius: 3px; background: #333; cursor: pointer; }
   #saves label.btn input { display: none; }
   #save-status { color: #ddd; }
+  #options { width: 640px; max-width: 100%; padding: 8px 12px; border: 1px solid #333; border-radius: 6px; box-sizing: border-box; }
+  #options select, #options button { font: inherit; }
+  #options details { margin-top: 6px; }
+  #options dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 6px 0; }
+  #options dt { font-weight: 600; color: #eee; } #options dd { margin: 0; }
   #log { width: 640px; max-width: 100%; height: 160px; overflow: auto; font: 11px monospace; color: #8a8; white-space: pre-wrap; }
+  /* G8 touch controls (touch.js). body.tplay: the touch layer is up in a running game: the picture is placed by
+     touch.js (top in portrait, centre in landscape), the rest of the page is out of the way until the menu button */
+  body.touchdev #rompick input[type=file], body.touchdev #saves button, body.touchdev #saves label.btn,
+  body.touchdev #options select, body.touchdev #options button { font-size: 16px; padding: 8px 10px; }
+  body.tplay { overflow: hidden; overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none;
+               -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  body.tplay #wrap > :not(canvas):not(#status) { display: none !important; }
+  body.tplay #status:empty { display: none; }
+  body.tplay #status { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: #300; padding: 4px; text-align: center; }
+  body.tplay canvas#canvas { position: fixed; max-width: none; aspect-ratio: auto; touch-action: none; z-index: 1; }
+  #touch { position: fixed; inset: 0; pointer-events: none; z-index: 10; -webkit-user-select: none; user-select: none; }
+  #touch[hidden] { display: none; }
+  #touch > * { position: absolute; pointer-events: auto; touch-action: none; -webkit-touch-callout: none; box-sizing: border-box; }
+  #touch .tb { display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 50%;
+               font: 700 17px/1 system-ui, sans-serif; color: rgba(255, 255, 255, .92); background: rgba(70, 70, 76, .5);
+               border: 2px solid rgba(255, 255, 255, .35); text-shadow: 0 1px 2px #000; }
+  #touch .tb small { font: 600 9px/1.2 system-ui, sans-serif; opacity: .85; text-transform: uppercase; letter-spacing: .04em; }
+  #touch .tb.on { filter: brightness(1.6); border-color: #fff; }
+  #touch .tb.pill { border-radius: 999px; font-size: 13px; }
+  #touch .tb.sq { border-radius: 8px; font-size: 18px; background: rgba(40, 40, 44, .55); }
+  #tk-A { background: rgba(40, 80, 210, .55); } #tk-B { background: rgba(30, 150, 60, .55); }
+  #tk-START { background: rgba(200, 40, 40, .55); }
+  #touch .tb.c { background: rgba(220, 180, 20, .45); font-size: 14px; }
+  #tk-Z { background: rgba(120, 120, 128, .55); }
+  #tk-stick { background: transparent; }
+  #tk-base { position: absolute; border-radius: 50%; pointer-events: none; background: rgba(40, 44, 52, .35);
+             border: 2px solid rgba(255, 255, 255, .3); }
+  #tk-knob { position: absolute; left: 50%; top: 50%; border-radius: 50%; background: rgba(220, 220, 220, .5);
+             border: 2px solid rgba(0, 0, 0, .4); }
+  #tk-back { position: fixed; top: calc(8px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right)); z-index: 30;
+             font: 600 16px system-ui, sans-serif; padding: 10px 16px; border-radius: 8px; background: #2a5; color: #fff; border: 0; }
+  #tk-back[hidden] { display: none; }
+  body.tmenu #wrap { padding-top: calc(64px + env(safe-area-inset-top)); }
+  #tk-safe { position: fixed; visibility: hidden; pointer-events: none; padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left); }
 </style>
 </head>
 <body>
@@ -29,6 +71,31 @@
   <div id="status"></div>
   <progress id="progress" style="display:none; width: 320px"></progress>
   <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  <div id="options">
+    <b>Options</b>
+    <label>Touch controls
+      <select id="opt-touch">
+        <option value="auto">Auto (on for touch screens)</option><option value="on">On</option><option value="off">Off</option>
+      </select></label>
+    <button id="opt-fs" hidden>Fullscreen</button>
+    <span id="opt-touch-state"></span>
+    <details id="touch-help"><summary>Touch controls (GoldenEye 1.1 controls)</summary>
+      <dl>
+        <dt>Stick</dt><dd>walk forward / back, turn (drag anywhere in the lower left)</dd>
+        <dt>Z</dt><dd>fire</dd>
+        <dt>R</dt><dd>hold to aim: the stick moves the sight (L aims too)</dd>
+        <dt>A</dt><dd>change weapon</dd>
+        <dt>B</dt><dd>action: doors, lifts, switches; reload</dd>
+        <dt>C◀ C▶</dt><dd>strafe left / right</dd>
+        <dt>C▲ C▼</dt><dd>look up / down (C▼ while aiming: crouch)</dd>
+        <dt>START</dt><dd>pause: Bond's watch (objectives, options)</dd>
+        <dt>☰</dt><dd>this page (save, options); ⛶ full screen</dd>
+      </dl>
+      <small>With the touch controls on, the game uses its own default control style 1.1 (HONEY). Aiming can be set
+        to toggle instead of hold in the watch's Control options. Picture at the top when the phone is upright,
+        controls on the sides when it is turned.</small>
+    </details>
+  </div>
   <div id="saves">
     <b>Save</b>
     <button id="save-export" disabled>Export save (.eep)</button>
@@ -42,8 +109,19 @@
   </div>
   <div id="log"></div>
 </div>
+<div id="touch" hidden>
+  <div id="tk-stick"><div id="tk-base"><div id="tk-knob"></div></div></div>
+  <div class="tb" id="tk-A">A<small>weapon</small></div><div class="tb" id="tk-B">B<small>action</small></div>
+  <div class="tb c" id="tk-CU">C▲</div><div class="tb c" id="tk-CL">C◀</div><div class="tb c" id="tk-CR">C▶</div><div class="tb c" id="tk-CD">C▼</div>
+  <div class="tb" id="tk-Z">Z<small>fire</small></div><div class="tb" id="tk-R">R<small>aim</small></div>
+  <div class="tb pill" id="tk-L">L</div><div class="tb pill" id="tk-START">START</div>
+  <div class="tb sq" id="tk-menu" title="Page menu">☰</div><div class="tb sq" id="tk-fs" title="Full screen">⛶</div>
+</div>
+<button id="tk-back" hidden>Back to the game ▶</button>
+<div id="tk-safe"></div>
 <script src="saves.js"></script>
 <script src="net.js"></script>
+<script src="touch.js"></script>
 <script src="main.js"></script>
 </body>
 </html>
