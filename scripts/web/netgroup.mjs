@@ -191,6 +191,12 @@ await (async () => {
       `${on && coverId ? ' (a tab in front of it)' : ''}, visibilityState ${await guest.ev('document.visibilityState')}, frame ${await guest.ev('__online.stats().frame')}`);
   };
   const t1 = Date.now(), speed = [];   // [seconds, stats per page] every 10 s
+  // G8: GUEST_EVALS="S:<js>|S:<js>": evaluate on the guest's page S seconds after the start (e.g. touch-control presses,
+  // scripts/web/netpair.sh GUEST_TOUCH=1); result logged as 'netgroup guest-eval S: <result>'
+  for (const ent of (process.env.GUEST_EVALS || '').split('|').filter(Boolean)) {
+    const i = ent.indexOf(':'), at = +ent.slice(0, i), js = ent.slice(i + 1);
+    setTimeout(async () => console.log(`netgroup guest-eval ${at}: ${JSON.stringify(await pages.guest.ev(js).catch((e) => String(e)))}`), at * 1000);
+  }
   while (Date.now() - t1 < +secs * 1000) {
     await sleep(10000);
     const s = await Promise.all(NAMES.map((n) => pages[n].ev('__online.stats()'))).catch((e) => NAMES.map(() => null));

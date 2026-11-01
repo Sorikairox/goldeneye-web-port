@@ -25,7 +25,8 @@ it, don't append history) and the rules specific to this repo. Session history: 
   `scripts/web/native_ref.sh`); not a web bug, N64 parity of those views unchecked. G6 (branch `web-net`, `docs/web/ONLINE.md`): optional
   online multiplayer, deterministic input lockstep over WebRTC for 2-4 players (det mode, state hashes,
   copy-paste codes, room codes on a local server, recorder); production room function and a real
-  two-machine test wait for the user. How to build/run/test: `docs/web/HANDOFF.md`.
+  two-machine test wait for the user. G8: touch controls (`port/web/touch.js`, `webtouch.c`; phone emulation
+  tests `scripts/web/phone_test.sh`). How to build/run/test: `docs/web/HANDOFF.md`.
 - **EU-only:** confirmed — the PAL build, the sidecar converters and the game need only the EU ROM.
 - **Tooling:** Docker images `goldeneye-emsdk`, `goldeneye-linux-amd64` (native reference build), containers
   `goldeneye-dev` (build, `--cpus=4`, build tree in volume `goldeneye-dev-build`), `goldeneye-web-serve`

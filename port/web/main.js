@@ -202,6 +202,7 @@ async function start(rom, romsum) {
       let args = (params.get('args') || '').split(/[ +]/).filter(Boolean);
       if (window.GENet) { args = GENet.args(args); await GENet.beforeMain(M); }   // G6: online session setup
       window.geMainCalled = true;
+      if (window.GETouch) GETouch.started();   // G8: the touch pad (touch.js) feeds controller 0 from now on
       try { Module.callMain(args); } catch (e) { if (e !== 'unwind') { log('[page] main threw: ' + e); throw e; } }
     },
   };

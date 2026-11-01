@@ -3,7 +3,12 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 + G4 + G5 + G6 + G7, 2026-10-30)
+## Current state (after G3 .. G8, 2026-11-01)
+
+G8: **touch controls**: the site is playable on a phone (section "Touch controls (G8)" below). Full N64 pad on
+screen, Auto / On / Off setting, portrait and landscape, rotation mid-game, fed into controller 0 like a keyboard
+or gamepad (online lockstep and recorder unchanged).
+
 
 G7: the "dark areas" (Egypt pillars, MP black / flat-grey walls) are **not a web-port bug**: the native
 PC port, built and run on this Mac (aarch64 Linux in Docker, llvmpipe), renders the same surfaces the
@@ -39,6 +44,71 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## Touch controls (G8, 2026-11-01)
+
+User rule (orchestrator.md): touch controls are always part of the web port; every session that changes the page
+re-checks phone emulation before deploying (`scripts/web/phone_test.sh`, below).
+
+- **Page** (`port/web/touch.js`, markup + CSS in `index.html`, `GETouch.started()` from `main.js` right before
+  `callMain`): floating analogue stick (touch anywhere in the lower-left zone; 50 px x scale = full tilt, 12 % dead
+  zone, -80..80), **Z** (fire, the big button) and **R** (aim) side by side under the right thumb, **B** (action) and
+  **A** (weapon) above them, the four **C** buttons as a diamond above those, **L** and **START**, a ☰ page-menu
+  button and a ⛶ full-screen button (hidden where the browser has no page full screen, i.e. iPhone Safari). Each
+  control follows its own pointer (pointer events + capture): stick and buttons together work (tested: walk + fire).
+  - Portrait: the 4:3 picture at the top (under the safe-area inset), controls in the space below.
+    Landscape: the picture centred at full height, controls over the side margins (R / B slightly over the picture
+    edge on 844x390).
+  - Positions are computed from the window size in `layout()` on every resize / orientationchange /
+    visualViewport resize; the stick's resting ring only from a laid-out zone box (ResizeObserver); the faces are DOM
+    (no canvases, so nothing is drawn while hidden). Conker P369 lessons applied from the start.
+  - ☰ shows the normal page (Save box, Options, Online panel, log) with a green "Back to the game" button; the pad
+    is idle meanwhile. Turning the phone with the menu open: the layout is redone on close (tested).
+  - While the layer is up: no pinch / double-tap zoom, no scroll, no long-press callout or selection.
+  - Touch devices (detected below): no `accept` filter on the ROM and save pickers (iOS greys out `.z64`; Android
+    may hide unknown types; SHA-1 / CRC checks stay), bigger tap targets.
+- **Setting** (Options box under the picture): Touch controls **Auto** (default: on when `(pointer: coarse)`, or touch
+  points on an iOS / Android / mobile browser) / **On** / **Off**. Only an explicit On / Off is stored
+  (`localStorage ge007-touch`); Auto stores nothing (one wrong detection never sticks). `?touch=1` / `?touch=0` for
+  tests (not stored). A help list explains the 1.1 controls. Desktop default: off, page unchanged (canvas 640x480).
+- **Input** (`port/src/web/webtouch.c`): the page calls `Module._ge_web_touch(on, buttons, x, y)` on every change
+  (N64 bit layout); `input.c inputComputePadSlot` merges it into controller 0 after keyboard / gamepad / adapters and
+  before the menu release hold-off (buttons OR'd, a moved touch stick replaces the stick). So the offline read, the
+  online lockstep sample (`geNetRetraceStart -> inputComputePad(0)`) and the recorder see touch exactly like a pad.
+  While on, offline Modern controls force the game's **1.1 HONEY** style for seat 0 (stick walks + turns) instead of
+  the 1.2 the port forces for keyboard + mouse; online (OG controls) the game's own style stands (1.1 by default).
+- **Proof** (port_work/g8, gitignored):
+  - `phone_test.sh` iPhone 390x844 -> 844x390 (`ios/`), Android 412x915 -> 915x412 (`and/`), Android 844x390 ->
+    412x915 (`land/`): controls complete and in place in every orientation, also after turning with the menu open;
+    controller 0 (GE_INPUTLOG) shows `btn=2000 stick=(3,80)` = Z + stick at once; Bond walks; the HUD ammo goes
+    7 -> 4 -> 2 -> 1 and bullet holes appear in the Dam barrier (`and/shot-d_fired.png`).
+  - ROM picker on an emulated iPhone, fresh profile (`picker/`): no accept filter, the file input starts the game.
+  - Boot by touch only (`boot/`): START / A taps go from power-on to the Dam briefing.
+  - Offline det (`netdet.sh`, 4P menu route, `&touch=1`): a1 vs a2 5883 / 5883 identical; touch-on vs touch-off
+    det runs 2890 / 2890 identical.
+  - Online 2P (`netpair.sh`, guest with `GUEST_TOUCH=1`, presses via `touchpress.js`): host vs guest 3575 / 3575
+    identical (H and S); against a run without touch the host's hashes are equal up to retrace 2211 and differ
+    from 2212 (the first touch): the guest's touch input reached the shared game.
+  - `deploy_check.sh` OK.
+
+```sh
+GE_PORT=8775 bash scripts/web/phone_test.sh port_work/g8/ios ios 390,844 844,390      # OUT ios|android W,H [TURN_W,H]
+PROBE_MOBILE=android PROBE_VIEWPORT=412,915 PROBE_STEPS='20:down:#tk-Z,1;20.3:up:#tk-Z,1;22:orient:915,412;23:shot:x' node scripts/web/probe.mjs URL 25 OUT
+GE_PORT=8775 GUEST_TOUCH=1 GUEST_EVALS="30:$(grep -v '^ *//' scripts/web/touchpress.js | tr '\n' ' ')|64:__tp('tk-Z',300)" bash scripts/web/netpair.sh NAME 110
+```
+
+### Traps found in G8
+- CDP `Input.dispatchTouchEvent` `touchEnd`: Chrome ends the points listed. Listing the fingers still down (as the
+  Conker probe's comment says) lifted the wrong finger; probe.mjs sends the lifting finger.
+- A whole-page screenshot of a long page at DPR 3 takes seconds; a tap sent meanwhile was lost (phone_test.sh waits).
+- `tr '\n' ' '` on a JS file with `//` comments turns the rest into a comment; strip comment lines first.
+
+### Next (touch)
+- A human on a real phone: iOS Safari (bottom toolbar, safe areas, no full screen: Add to Home Screen), Android
+  Chrome full screen, haptics, feel of the stick size / travel and the button places; whether the 2 GiB wasm memory
+  is granted on the phone at all (desktop-only so far, open problem below) - the first thing to check.
+- Tapping menu items on the picture (SDL turns touches on the canvas into mouse events; untested).
+- Optional: R as a latch on touch (the game's own watch option Aim: toggle exists).
 
 ## Dark areas (G7, 2026-10-30)
 
@@ -318,6 +388,7 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
 | saves (G5) | C: `port/src/web/websave.c`, `GE_WEB` blocks in `port/src/libultra.c` (EEPROM), `config.c`, `eepimport.c` (`ge_web_eep_check`); page: `port/web/saves.js` (`GESaves`), Save box in `index.html`; test `scripts/web/save_test.sh` |
 | native reference (G7) | `scripts/web/native_ref.sh` (aarch64 Linux container, Xvfb/llvmpipe, `GE_PCDUMP` -> PNG via `scripts/web/ppm2png.py`), CMake `GE_LP64_GAME_DEFINE` |
 | det stop / dark repro (G7) | `GE_DETSTOP` in `port/src/web/webnet.c`, `ENV_DET_OK` in `port/web/net.js`, `scripts/web/darkdet.sh` |
+| touch controls (G8) | page `port/web/touch.js` (+ `index.html` markup/CSS, `main.js` GETouch.started); C `port/src/web/webtouch.c`, merge in `port/src/input.c` (`geWebTouchMerge`, `stickSolitare`); tests `scripts/web/phone_test.sh`, probe.mjs `PROBE_MOBILE`/`PROBE_STEPS`, `touchpress.js` |
 | deploy gate | `tools_web/romscan.c`, `tools_web/romscan_attr.py`, `scripts/web/romscan.{sh,allow}`, `scripts/web/deploy_check.sh` |
 
 ## Traps found in G7

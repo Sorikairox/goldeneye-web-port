@@ -77,6 +77,21 @@ if (process.env.PROBE_DEBUG) await call('Debugger.enable');
 if (process.env.PROBE_PROFILE) { await call('Profiler.enable'); await call('Profiler.setSamplingInterval', { interval: 500 }); }
 // PROBE_PRELOAD="<js>": runs in the page before its own scripts (fake navigator APIs, e.g. a gamepad)
 if (process.env.PROBE_PRELOAD) await call('Page.addScriptToEvaluateOnNewDocument', { source: process.env.PROBE_PRELOAD });
+// G8: PROBE_MOBILE=ios|android emulates a phone before the first load (from the Conker port's audprobe, P369): mobile
+// viewport PROBE_VIEWPORT=W,H (default 390,844) at device scale factor 3 with the screen orientation from W,H, touch
+// emulation (pointer: coarse, ontouchstart, maxTouchPoints 5) and the phone's user agent. Screenshots are then the
+// whole page (the touch controls live outside the canvas). PROBE_STEPS (below) drives real touch events.
+const MOBILE_UA = { ios: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+  android: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36' }[process.env.PROBE_MOBILE || ''];
+const metrics = (w, h) => call('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 3, mobile: true, screenWidth: w, screenHeight: h,
+  screenOrientation: h > w ? { type: 'portraitPrimary', angle: 0 } : { type: 'landscapePrimary', angle: 90 } });
+if (MOBILE_UA) {
+  const [w, h] = (process.env.PROBE_VIEWPORT || '390,844').split(',').map(Number);
+  await metrics(w, h);
+  await call('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  await call('Emulation.setUserAgentOverride', { userAgent: MOBILE_UA, platform: process.env.PROBE_MOBILE === 'ios' ? 'iPhone' : 'Linux armv8l' });
+  process.env.PROBE_FULL = '1';
+}
 tNav = Date.now(); await call('Page.navigate', { url });
 if (process.env.PROBE_PROFILE) setTimeout(() => call('Profiler.start'), +process.env.PROBE_PROFILE * 1000);
 const t0 = Date.now();
@@ -123,6 +138,41 @@ for (const ent of (process.env.PROBE_EVALS || '').split('|').filter(Boolean)) {
     const r = await Promise.race([call('Runtime.evaluate', { expression: js, returnByValue: true, awaitPromise: true, userGesture: true }), sleep(5000).then(() => null)]);
     addLine(`probe-eval ${t}: ` + (r ? JSON.stringify(r.result?.result?.value ?? r.result?.exceptionDetails?.text) : 'no answer'));
   }, +t * 1000);
+}
+// G8: PROBE_STEPS="2.5:down:X,Y[,ID];3:move:X,Y[,ID];3.5:up:X,Y[,ID];10:orient:W,H;12:shot:TAG;13:eval:JS" at <s since
+// navigation>: real CDP touch events (several fingers by ID, default 0; CSS px; or #elementId,ID[,dx,dy] = that element's
+// centre at that moment + offset), a phone turn (PROBE_MOBILE), a
+// whole-page screenshot <outdir>/shot-TAG.png, an evaluation logged as 'step-eval <t>: <result>'
+{
+  const touches = new Map(); let touchOn = !!MOBILE_UA;
+  for (const st of (process.env.PROBE_STEPS || '').split(';').map((x) => x.trim()).filter(Boolean)) {
+    const [ts, act, ...rest] = st.split(':'); const arg = rest.join(':');
+    setTimeout(async () => {
+      if (act === 'down' || act === 'move' || act === 'up') {
+        if (!touchOn) { touchOn = true; await call('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }); }
+        let x, y, tid = 0;
+        if (arg.startsWith('#')) {   // #elementId,ID[,dx,dy]: the element's centre (+ offset) now
+          const [sel, id = '0', dx = '0', dy = '0'] = arg.split(',');
+          const q = await call('Runtime.evaluate', { expression: `JSON.stringify(document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect())`, returnByValue: true });
+          const b = JSON.parse(q.result?.result?.value || 'null');
+          if (!b) { addLine(`step ${ts}: ${sel} not found`); return; }
+          x = b.x + b.width / 2 + +dx; y = b.y + b.height / 2 + +dy; tid = +id;
+        } else [x, y, tid = 0] = arg.split(',').map(Number);
+        // touchStart / touchMove: every finger down; touchEnd: the finger that lifts (Chrome ends the points listed:
+        // listing the fingers still down lifted the wrong one)
+        const pt = { x, y, id: tid, radiusX: 4, radiusY: 4, force: 1 };
+        if (act === 'up') { touches.delete(tid); await call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [pt] }); }
+        else { touches.set(tid, pt); await call('Input.dispatchTouchEvent', { type: act === 'down' ? 'touchStart' : 'touchMove', touchPoints: [...touches.values()] }); }
+      } else if (act === 'orient') { const [w, h] = arg.split(',').map(Number); await metrics(w, h); addLine(`step ${ts}: orient ${w}x${h}`); }
+      else if (act === 'shot') {
+        const r = await Promise.race([call('Page.captureScreenshot', { format: 'png' }), sleep(10000).then(() => null)]);
+        if (r?.result?.data) { const f = path.join(outdir, `shot-${arg}.png`); fs.writeFileSync(f, Buffer.from(r.result.data, 'base64')); addLine(`step ${ts}: shot ${f}`); }
+      } else if (act === 'eval') {
+        const r = await Promise.race([call('Runtime.evaluate', { expression: arg, returnByValue: true, awaitPromise: true }), sleep(5000).then(() => null)]);
+        addLine(`step-eval ${ts}: ` + (r ? JSON.stringify(r.result?.result?.value ?? r.result?.exceptionDetails?.text) : 'no answer'));
+      }
+    }, +ts * 1000);
+  }
 }
 let stacked = false, paused = null;
 ws.addEventListener('message', (m) => { const d = JSON.parse(m.data); if (d.method === 'Debugger.paused') paused = d.params; });
