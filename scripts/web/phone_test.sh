@@ -11,6 +11,7 @@
 # game reads it. Muted headless Chrome, one at a time (probe.mjs takes /tmp/goldeneye-chrome.lock).
 cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)" || exit 1
 OUT=${1:-port_work/phone}; UA=${2:-ios}; WH=${3:-390,844}; TURN=${4:-}
+mkdir -p "$OUT"
 URL="http://localhost:${GE_PORT:-8770}/app/index.html?romurl=../dev/ge007.pal-final.z64&assets=../dev&args=-level_33&env=GE_INPUTLOG=1${GE_EXTRA_PARAMS:-}"
 MARK="JSON.stringify(Object.assign(GETouch.state(), { canvas: (r => [r.x, r.y, r.width, r.height].map(Math.round))(document.getElementById('canvas').getBoundingClientRect()), body: document.body.className }))"
 S=(); t=12
