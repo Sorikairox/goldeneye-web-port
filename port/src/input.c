@@ -531,7 +531,14 @@ static int padPresetEff(int seat) { return (controlScheme && padPreset[seat] != 
  * the game runs one control style per player). 1.1 Jinx (the default) and
  * Custom keep Input.NaturalPitch, so the NaturalPitch=0 escape hatch still
  * works exactly as before D498. D518: per seat. */
+#if defined(GE_WEB)
+extern int geWebTouchOn;   /* G8 port/src/web/webtouch.c: the on-screen touch pad is shown */
+void geWebTouchMerge(unsigned *button, int *sx, int *sy);
+#endif
 static int stickSolitare(int seat) {
+#if defined(GE_WEB)
+    if (seat == 0 && geWebTouchOn) return 0;   /* G8: touch pad -> the game's 1.1 roles (stick walks), webtouch.c */
+#endif
     if (padPresetEff(seat) == 1 || padPresetEff(seat) == 2) return 0;
     if (padPresetEff(seat) == 4) return 1;
     return naturalPitchMode;
@@ -2929,6 +2936,10 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
             s_crouchPlayer = NULL;
         }
     }
+
+#if defined(GE_WEB)
+    if (idx == 0) geWebTouchMerge(&button, &sx, &sy);   /* G8: on-screen touch pad (webtouch.c) */
+#endif
 
     /* D541: front-end release hold-off. One physical press can reach the menu
      * through two OR'd sources a few ms apart -- on a Steam Deck in Desktop
