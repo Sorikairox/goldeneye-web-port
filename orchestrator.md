@@ -63,5 +63,11 @@ it, don't append history) and the rules specific to this repo. Session history: 
 - No `git stash`. No system installs on the host without the user's approval: use Docker containers
   (`export PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH`; the Conker containers on this machine are
   not ours to touch, but its `conker-emsdk` image may be reused).
+- **Touch controls are always part of the web port (user rule 2026-11-01).** The site must be playable on a phone:
+  on-screen N64 pad (stick, A, B, Z, R, L, C buttons, Start), portrait (picture on top, controls below) and
+  landscape, multi-touch, rotation mid-game, ROM picker and page menus usable by touch, fed through the same input
+  path as keyboard/gamepad. Setting Auto (on for touch devices) / On / Off. Every session that changes the page
+  re-checks phone emulation (CDP touch, mobile UA, portrait + landscape) before deploy. Reference: the Conker port
+  (~/conker-wt/web port/web/main.js, docs/design/PLAYING.md).
 - If a permission is denied: stop and report the exact command.
 - At most 2–3 agent sessions at once, each with its own worktree and container, disjoint files.
