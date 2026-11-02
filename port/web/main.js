@@ -225,6 +225,8 @@ document.getElementById('romfile').addEventListener('change', async (ev) => {
     catch (e) { status('romurl: ' + (e.message || e)); }
     return;
   }
+  // G9 offline play: a new version waiting in the service worker takes over (one reload) before the game starts
+  if (window.GEOffline) await Promise.race([GEOffline.ready, new Promise((r) => setTimeout(r, 6000))]);
   const saved = await idbGet('rom');
   if (saved) { status('using the ROM stored in this browser'); try { start(...await acceptRom(saved.buffer || saved, false)); } catch (e) { status(String(e.message || e)); } }
   else status('choose your ROM to start');

@@ -896,6 +896,7 @@
 #netwait { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #000c; padding: 6px 12px; border-radius: 4px; }
 </style>
 <label><input type="checkbox" id="net-enable"> Online multiplayer (experimental)</label>
+<div id="net-offline-note" hidden>No connection: online multiplayer needs the internet. Solo and split-screen play work offline.</div>
 <div id="net-panel" hidden>
   <div class="row" id="net-start-row"><button id="net-room-create">Create room (player 1)</button> or
     <input id="net-room-code" size="7" placeholder="CODE"> <button id="net-room-join">Join room</button>
@@ -922,6 +923,13 @@
     pick.parentNode.insertBefore(box, pick.nextSibling);
     $('net-enable').checked = N.enabled;
     $('net-enable').onchange = () => { lsSet($('net-enable').checked); location.reload(); };
+    // G9 offline play: without a connection say so plainly and keep the session buttons off ("Play offline" stays)
+    const netLine = () => {
+      const off = navigator.onLine === false;
+      $('net-offline-note').hidden = !off;
+      for (const id of ['net-room-create', 'net-room-join', 'net-host', 'net-join']) if ($(id) && (off || !T.role)) $(id).disabled = off;
+    };
+    window.addEventListener('online', netLine); window.addEventListener('offline', netLine); netLine();
   }
   const panelShow = (on) => { if ($('net-panel')) $('net-panel').hidden = !on; };
   const netStatus = (s, cls) => { if ($('net-status')) { $('net-status').textContent = s; $('net-status').className = cls || ''; } };

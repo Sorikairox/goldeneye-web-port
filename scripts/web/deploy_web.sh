@@ -18,6 +18,8 @@ scripts/web/deploy_check.sh
 S=~/goldeneye-site/publish; rm -rf "$S"; mkdir -p "$S"
 cp $B/* "$S"/
 git log -1 --format='%h %ad %s' --date=format:'%Y-%m-%d %H:%M' > "$S/BUILD.txt"
+# G9 offline play: the service worker's precache list + build id over exactly the published files (BUILD.txt included)
+node scripts/web/swbuild.mjs "$S"
 # the function is bundled from a directory outside the published one (node_modules must never be published), where
 # npm installs @netlify/blobs from port/netlify/package.json (Conker trap: the bundler only takes packages from
 # under the directory it runs in)

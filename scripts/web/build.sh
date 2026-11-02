@@ -31,4 +31,5 @@ ge_exec bash -c "mkdir -p $B build-web && \
     echo 'GE_NOSTRIP=1: site is UNSTRIPPED (build-web/site/DEV-UNSTRIPPED), dev only'; \
   else bash scripts/web/romfill.sh $ROMID; fi && \
   python3 scripts/web/netregions.py $B/ge007.map build-web/site/ge007.netregions && \
+  \${EMSDK_NODE:-node} scripts/web/swbuild.mjs build-web/site && \
   ls -la build-web/site/ge007.wasm build-web/site/ge007.js | awk '{print \$5, \$9}'"

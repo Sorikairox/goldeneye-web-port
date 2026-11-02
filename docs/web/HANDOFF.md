@@ -3,7 +3,10 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 .. G8, 2026-11-01)
+## Current state (after G3 .. G9, 2026-11-02)
+
+G9: **offline play**: after one visit the site works with no network (section "Offline play (G9)" below). Page option
+"Offline play", default on.
 
 G8: **touch controls**: the site is playable on a phone (section "Touch controls (G8)" below). Full N64 pad on
 screen, Auto / On / Off setting, portrait and landscape, rotation mid-game, fed into controller 0 like a keyboard
@@ -44,6 +47,53 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## Offline play (G9, 2026-11-02)
+
+User request: once someone has loaded the website, the game must work with no network.
+- **Service worker** `port/web/sw.js` + generated `sw-build.js` (`scripts/web/swbuild.mjs <site>`, run by `build.sh` on
+  build-web/site and by `deploy_web.sh` on the publish dir after BUILD.txt). `sw-build.js` holds `GE_FILES` (every
+  file of the site except sw.js / sw-build.js) and `GE_BUILD` = SHA-256 over names + contents. Cache name
+  `ge007-offline-<GE_BUILD>`. Install precaches all files (`cache: 'no-cache'`: revalidated, never a stale HTTP-cache
+  copy of an older build); activate deletes every other `ge007-offline-*` cache and claims the page (the first visit is
+  already offline-capable, no reload). Fetch: same-origin GET under the scope, cache-first (`ignoreSearch`, navigations
+  get index.html); never touched: non-GET, other origins, `/api/*` (the room function) and `/.netlify/*`.
+  **Precache: 14 files, 13.23 MiB** (ge007.wasm 12.3 MiB, ge007.js 0.45 MiB, romfill 0.28 MiB, the rest small).
+- **Updates:** a deploy changes sw-build.js; the browser's update check (each load, and every 30 min of a long session)
+  installs the new worker, which waits. The page shows "Update ready [Reload] [×]" (fixed, above the touch layer). The
+  next page load takes the new version before the game starts: `main.js` awaits `GEOffline.ready` (max 6 s), which
+  tells a waiting worker to skipWaiting and reloads once on controllerchange. So the game never runs on mixed versions.
+- **Page** `port/web/offline.js`: option checkbox "Offline play" in the Options box (default ON because the user
+  asked; an explicit Off is stored as localStorage `ge007-offline=off`; `?offline=0|1` for tests, not stored); status
+  line under it (MB cached, build, persistent or not). On: register, `navigator.storage.persist()` (headless Chrome
+  answers false; real Chrome grants it to engaged / installed sites). Off: unregister + delete the caches; the page
+  then loads from the network exactly as before G9 (tested: 0 registrations, 0 caches, after reload too).
+- **Manifest** `manifest.webmanifest` + plain generic icons (`icon.svg`, `icon-192.png`, `icon-512.png`: grey ring and
+  play triangle on dark grey, drawn by a few lines of Python, no game art). Installable as an app.
+- **Online panel** (`net.js`): with `navigator.onLine === false` it says "No connection: online multiplayer needs the
+  internet. Solo and split-screen play work offline." and disables Create / Join / Host / Join (Play offline stays);
+  follows the online / offline events.
+- **Unchanged:** the ROM (`ge007-web` / `files` / `rom`), the converted sidecars and the saves stay in IndexedDB.
+- **Memory:** the cache lives in Cache Storage on disk and is streamed by the browser; nothing of it is in the wasm
+  heap or the page's JS heap. The extra cost is a one-time second download of ~13 MiB (the precache runs next to the
+  page's own fetch on the very first visit) and ~13 MiB of disk. It adds no pressure to the ~2 GiB wasm memory risk on
+  phones (that risk is unchanged, still open: real phones).
+- **Tests** (muted headless Chrome, one at a time; probe.mjs got steps `net:offline|online` = Network.emulate-
+  NetworkConditions + overrideNetworkState on the page and on every service worker, and `reload`):
+  - `scripts/web/offline_test.sh OUTDIR [SITE_URL]`: Android phone emulation 412x915, fresh profile; first visit,
+    ROM chosen with the file picker (CDP setFileInputFiles), game boots; at 80 s network off (locally the dev server
+    is also killed), reload: page + ROM picker present, stored ROM boots, sidecars from IndexedDB, touch layer up and
+    playing, intro renders, Online note shown and buttons disabled.
+  - `scripts/web/offline_update_test.sh OUTDIR`: builds A -> B -> C in one kept profile: notice appears, a plain reload
+    switches to B and leaves only cache B; the notice's Reload button switches to C and leaves only cache C.
+
+### Traps found in G9
+- Chrome 156: after a reload served by the service worker, `navigator.onLine` came back true although the page's
+  offline emulation was set; probe.mjs re-applies the network state after `reload`. Requests still failed (no file
+  came from the network: the local server was dead), only the flag was wrong.
+- probe.mjs steps are split on `;`: an `eval:` with a `;` in its JS breaks ("Uncaught").
+- A probe that died on an unhandled rejection left its Chrome running (orphan, killed by PID); probe.mjs now kills
+  Chrome on any unhandled rejection and reads the browser endpoint once at start.
 
 ## Touch controls (G8, 2026-11-01)
 

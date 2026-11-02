@@ -6,6 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <title>GoldenEye 007 (web port, dev)</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#000000">
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; background: #000; color: #ccc; font: 14px system-ui, sans-serif; }
@@ -57,6 +60,12 @@
              font: 600 16px system-ui, sans-serif; padding: 10px 16px; border-radius: 8px; background: #2a5; color: #fff; border: 0; }
   #tk-back[hidden] { display: none; }
   body.tmenu #wrap { padding-top: calc(64px + env(safe-area-inset-top)); }
+  /* G9 offline play (offline.js): the "Update ready" notice, above everything (also over the touch layer) */
+  #ge-update { position: fixed; top: calc(6px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 50;
+               background: #135; color: #fff; padding: 6px 10px; border-radius: 6px; font: 14px system-ui, sans-serif; box-shadow: 0 2px 8px #000a; }
+  #ge-update[hidden] { display: none; }
+  #ge-update button { font: inherit; }
+  #net-offline-note { color: #fc8; }
   #tk-safe { position: fixed; visibility: hidden; pointer-events: none; padding: env(safe-area-inset-top) env(safe-area-inset-right)
              env(safe-area-inset-bottom) env(safe-area-inset-left); }
 </style>
@@ -77,8 +86,11 @@
       <select id="opt-touch">
         <option value="auto">Auto (on for touch screens)</option><option value="on">On</option><option value="off">Off</option>
       </select></label>
+    <label title="Keep a copy of the site in this browser so the game starts without a connection">
+      <input type="checkbox" id="opt-offline" checked> Offline play</label>
     <button id="opt-fs" hidden>Fullscreen</button>
     <span id="opt-touch-state"></span>
+    <div><small>Offline play: <span id="opt-offline-state">…</span></small></div>
     <details id="touch-help"><summary>Touch controls (GoldenEye 1.1 controls)</summary>
       <dl>
         <dt>Stick</dt><dd>walk forward / back, turn (drag anywhere in the lower left)</dd>
@@ -119,6 +131,7 @@
 </div>
 <button id="tk-back" hidden>Back to the game ▶</button>
 <div id="tk-safe"></div>
+<script src="offline.js"></script>
 <script src="saves.js"></script>
 <script src="net.js"></script>
 <script src="touch.js"></script>

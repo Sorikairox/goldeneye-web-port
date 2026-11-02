@@ -58,6 +58,10 @@ for (let i = 0; i < 60 && !page; i++) {
   try { page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === 'page'); } catch (e) {}
 }
 if (!page) { console.log('probe: no DevTools page'); done(2); }
+// the browser-level endpoint, read now while DevTools is known to answer (G9 netEmulate; a later fetch was refused once)
+let browserWs = null; try { browserWs = (await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl; } catch (e) {}
+// never leave an orphaned Chrome behind on an unexpected error
+process.on('unhandledRejection', (e) => { console.log('probe: unhandled ' + (e && e.stack || e)); done(2); });
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener('open', r));
 let id = 0; const pending = new Map();
@@ -139,10 +143,39 @@ for (const ent of (process.env.PROBE_EVALS || '').split('|').filter(Boolean)) {
     addLine(`probe-eval ${t}: ` + (r ? JSON.stringify(r.result?.result?.value ?? r.result?.exceptionDetails?.text) : 'no answer'));
   }, +t * 1000);
 }
+// G9: network on / off for the page AND every service worker (also one started later): a browser-level session
+// auto-attaches to new targets (paused until the emulation is applied); the page gets the same emulation directly.
+let netOffline = false, bws = null, bid = 0; const bpending = new Map(); const bsessions = new Map();
+const bcall = (method, params = {}, sessionId) => new Promise((r) => { bpending.set(++bid, r); bws.send(JSON.stringify(Object.assign({ id: bid, method, params }, sessionId ? { sessionId } : {}))); });
+const cond = () => ({ offline: netOffline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+async function netEmulate(off) {
+  netOffline = off;
+  if (!bws) {
+    bws = new WebSocket(browserWs); await new Promise((r) => bws.addEventListener('open', r));
+    bws.addEventListener('message', async (m) => {
+      const d = JSON.parse(m.data);
+      if (bpending.has(d.id)) { bpending.get(d.id)(d); bpending.delete(d.id); }
+      if (d.method === 'Target.attachedToTarget') {
+        const sid = d.params.sessionId, ty = d.params.targetInfo.type; bsessions.set(sid, ty);
+        if (ty === 'service_worker' || ty === 'worker') { await bcall('Network.enable', {}, sid); await bcall('Network.emulateNetworkConditions', cond(), sid); addLine(`probe: ${ty} attached, offline=${netOffline}`); }
+        bcall('Runtime.runIfWaitingForDebugger', {}, sid);
+      }
+    });
+    await bcall('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+    const t = await bcall('Target.getTargets');
+    for (const ti of t.result.targetInfos) if (ti.type === 'service_worker' && !ti.attached) await bcall('Target.attachToTarget', { targetId: ti.targetId, flatten: true });
+  }
+  for (const [sid, ty] of bsessions) if (ty === 'service_worker' || ty === 'worker') { await bcall('Network.enable', {}, sid); await bcall('Network.emulateNetworkConditions', cond(), sid); }
+  await call('Network.enable'); await call('Network.emulateNetworkConditions', cond());
+  // newer Chrome: navigator.onLine / online+offline events follow Network.overrideNetworkState (older: the call above)
+  const o = await call('Network.overrideNetworkState', { offline: off, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  if (o.error) addLine('probe: Network.overrideNetworkState: ' + o.error.message);
+}
 // G8: PROBE_STEPS="2.5:down:X,Y[,ID];3:move:X,Y[,ID];3.5:up:X,Y[,ID];10:orient:W,H;12:shot:TAG;13:eval:JS" at <s since
 // navigation>: real CDP touch events (several fingers by ID, default 0; CSS px; or #elementId,ID[,dx,dy] = that element's
 // centre at that moment + offset), a phone turn (PROBE_MOBILE), a
-// whole-page screenshot <outdir>/shot-TAG.png, an evaluation logged as 'step-eval <t>: <result>'
+// whole-page screenshot <outdir>/shot-TAG.png, an evaluation logged as 'step-eval <t>: <result>'; G9: net:offline /
+// net:online (page + service workers, netEmulate above), reload (Page.reload)
 {
   const touches = new Map(); let touchOn = !!MOBILE_UA;
   for (const st of (process.env.PROBE_STEPS || '').split(';').map((x) => x.trim()).filter(Boolean)) {
@@ -163,7 +196,14 @@ for (const ent of (process.env.PROBE_EVALS || '').split('|').filter(Boolean)) {
         const pt = { x, y, id: tid, radiusX: 4, radiusY: 4, force: 1 };
         if (act === 'up') { touches.delete(tid); await call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [pt] }); }
         else { touches.set(tid, pt); await call('Input.dispatchTouchEvent', { type: act === 'down' ? 'touchStart' : 'touchMove', touchPoints: [...touches.values()] }); }
-      } else if (act === 'orient') { const [w, h] = arg.split(',').map(Number); await metrics(w, h); addLine(`step ${ts}: orient ${w}x${h}`); }
+      } else if (act === 'net') { await netEmulate(arg === 'offline'); addLine(`step ${ts}: network ${arg}`); }
+      else if (act === 'reload') {
+        await call('Page.reload', { ignoreCache: false }); addLine(`step ${ts}: reload`);
+        // a reload served by a service worker came back with navigator.onLine true although the override was set
+        // (Chrome 156): apply the network state again once the new document exists
+        if (netOffline) { await sleep(300); await netEmulate(true); }
+      }
+      else if (act === 'orient') { const [w, h] = arg.split(',').map(Number); await metrics(w, h); addLine(`step ${ts}: orient ${w}x${h}`); }
       else if (act === 'shot') {
         const r = await Promise.race([call('Page.captureScreenshot', { format: 'png' }), sleep(10000).then(() => null)]);
         if (r?.result?.data) { const f = path.join(outdir, `shot-${arg}.png`); fs.writeFileSync(f, Buffer.from(r.result.data, 'base64')); addLine(`step ${ts}: shot ${f}`); }
