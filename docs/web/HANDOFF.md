@@ -87,6 +87,11 @@ User request: once someone has loaded the website, the game must work with no ne
   - `scripts/web/offline_update_test.sh OUTDIR`: builds A -> B -> C in one kept profile: notice appears, a plain reload
     switches to B and leaves only cache B; the notice's Reload button switches to C and leaves only cache C.
 
+- **Deployed** 2026-11-02, commit 09812668 (live sw-build build id `14b2513d6e10ae1a`, 15 files incl. BUILD.txt); the
+  offline test passed against https://goldeneye-web-port.netlify.app/ as well as locally.
+- **Next:** check on real phones (Android Chrome: install to home screen, airplane mode; iOS Safari: offline after a
+  visit, home-screen app storage is separate from Safari's, so the ROM must be chosen again there).
+
 ### Traps found in G9
 - Chrome 156: after a reload served by the service worker, `navigator.onLine` came back true although the page's
   offline emulation was set; probe.mjs re-applies the network state after `reload`. Requests still failed (no file
