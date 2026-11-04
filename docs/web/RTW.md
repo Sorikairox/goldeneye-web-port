@@ -27,7 +27,7 @@ The built files are committed on the local branch `rtw-dist` (manifest at the ro
 | `module` | factory `createGoldenEye`, loop `mainloop` | `main()` installs `emscripten_set_main_loop` (webkernel.c) and returns |
 | `video` | `webgl` | WebGL2 on the host's OffscreenCanvas |
 | `hz` | 50 | PAL; informative (the module paces itself) |
-| `memory` | 2112 / 2112 MiB, `memory64: true` | the `-sMEMORY64=2` (lowered) shape; module-defined memory |
+| `memory` | 384 / 384 MiB, `memory64: true` | the `-sMEMORY64=2` (lowered) shape; module-defined memory; 2112 MiB before G12 |
 | `save` | `eeprom`, 512 bytes | the cart's real 4 Kbit EEPROM, native byte order (below) |
 | `controls.extra` | 16 Reload, 17 Crouch, 18 Screenshot | port actions without an N64 button; screenshot -> PNG via `rtw_export_file` |
 | `options` | 16 options (below) | the ini keys that make sense without the F10 overlay |
@@ -36,7 +36,7 @@ The built files are committed on the local branch `rtw-dist` (manifest at the ro
 
 - Link: `-sENVIRONMENT=worker -sMODULARIZE=1 -sEXPORT_NAME=createGoldenEye -sDYNAMIC_EXECUTION=0`
   `--js-library=port/rtw/rtw_lib.js` (in place of `-sENVIRONMENT=web`; everything else as the web build, MEMORY64=2,
-  ASYNCIFY, 2112 MiB fixed). The glue takes the wasm from `Module.wasmBinary` (the host passes it; no fetch).
+  ASYNCIFY, 384 MiB fixed since G12, was 2112). The glue takes the wasm from `Module.wasmBinary` (the host passes it; no fetch).
   RelWithDebInfo like the site, DWARF stripped after the template strip (`llvm-objcopy --strip-debug`: 12.9 MB -> 3.2 MB).
 - Sources: `port/rtw/rtw.c` and `port/rtw/gfx_rtw.cpp` replace `port/src/web/{webaudio,webpage,websave}.c` and
   `port/fast3d/gfx_sdl2.cpp`. **No shared source file is changed**: the hooks into the port are link wraps
@@ -119,22 +119,21 @@ changed. On start the host's image goes to `ge_web_eeprom_load` (the G5 seam) be
   `optionsoverlay: option 'Video.AspectMode' not registered` and its ini can't set those options; the same goes for
   constructor-time default strings (`Input.Bind.Back: unknown binding 'Do'`). GE_RTW fix: the `configRegister*` /
   `configSetOptionMeta` calls are wrapped and queued until the fill, then replayed in order (`rtwConfigReplay`).
-  Web fix (not done, it would change the web build): the same deferral, or config.c keeping key pointers.
+  Web fix (G11, branch `web`): the strip itself no longer zeroes those pieces; the deferral here is now redundant
+  but harmless (kept).
   Not fixed in either build: default *values* copied at constructor time (the bind strings) stay broken. Any log line printed before the fill can be
   cut short the same way (rtw.c logs the build id only after the fill).
 - `romscan.sh` (via `deploy_check.sh`) takes the build lock itself: don't call it while holding the lock.
 - The host's AudioWorklet does not load under `npm run dev` (Vite dev: "node name 'rtw-audio' is not defined"); the
   e2e dev phase sets the host's ScriptProcessor fallback (`rtw:audio` `{"fallback":true}`). The built host (dist) is fine.
 
-## Memory (2112 MiB)
+## Memory (384 MiB since G12; was 2112 MiB)
 
-The size is set by the memory map, not by need: the N64 DRAM single view sits at 0x80000000 (+8 MiB), because game
-code rebuilds KSEG0 pointers with `| 0x80000000` and fast3d maps K0 addresses directly (PLAN 2.2). The smallest fixed
-size with this map is 2056 MiB (0x80000000 + 8 MiB; the stack/heap live below 2 GiB), so a smaller manifest value saves
-nothing that matters. A real reduction (~300 MiB) needs the arena moved lower and the five `| 0x80000000` game sites
-plus fast3d's K0 mapping routed through one helper (a rule-2-style review). Phones: a 2 GiB+ ArrayBuffer is refused by
-32-bit browsers and by many phones with little RAM (Chrome Android reserves it as virtual memory, so 64-bit Chrome on a
-large phone may work; iOS Safari's limit is lower, about 1-1.5 GiB on most devices); untested on real phones.
+Same map as the web build (docs/web/PLAN.md 2.2, one CMake): cart window 0x10000000 + 32 MiB, N64 DRAM 0x12000000 +
+8 MiB, static data from 0x12800000, `-sINITIAL_MEMORY=384mb`; manifest `memory.initialMB = maximumMB = 384`. Before
+G12 the DRAM sat at 0x80000000, which forced 2112 MiB. Heap high-water in the web build: address 0x155D6000 (342
+MiB) in every level and MP setup. Phones: still untested on a real device (iOS Safari's limit is ~1-1.5 GiB on most
+devices, so 384 MiB is now well inside it).
 
 ## What does not fit v1 (host would need)
 

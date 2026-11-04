@@ -94,6 +94,10 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   sidecar cache (`sidecars-v<GECONV_VERSION>-<sha1>`) stays valid, no version bump; fillcheck equal; romscan 4 runs /
   280 B, deploy_check OK; route_dam, level + MP sweeps (no trap), phone_test (Android), offline_test PASS; native
   aarch64 reference build compiles and reaches Dam gameplay.
+- **rtw** (branch `web-rtw` rebased onto this): manifest memory 384 / 384 MiB (`scripts/rtw/retrowser.template.json`),
+  rtw-dist rebuilt; rtw-check `--rom` EU ROM OK, deploy_check OK; e2e on the retrowser host + GitHub mock: dev phase
+  12/12 PASS (boot, pad input, pointer lock, screenshot, options, audio, native save valid + handed back, sidecars
+  from IndexedDB), offline phase 6/6 PASS.
 - **Note:** `.gerec` recordings made with an older build report a difference on replay (checkpoint hashes include
   pointers); recordings are per build already (the file carries the build id).
 - Fill table now 7,820 ranges / 135,958 B (pointer values no longer coincide with the ROM's 0x80xxxxxx words).
@@ -128,7 +132,7 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
 - **What**: `GE_RTW` CMake option, own tree `/build/rtw`; `port/rtw/{rtw.c,gfx_rtw.cpp,rtw_lib.js}` replace the
   page-facing web files (`webaudio.c`, `webpage.c`, `websave.c`, `gfx_sdl2.cpp`). Classic-script MODULARIZE factory
   `createGoldenEye`, `-sENVIRONMENT=worker`, `-sDYNAMIC_EXECUTION=0`, wasm from `Module.wasmBinary`, MEMORY64=2 kept
-  (manifest `memory.memory64: true`, 2112/2112 MiB, pointer exports/imports are i64 = BigInt), loop `mainloop`,
+  (manifest `memory.memory64: true`, 2112/2112 MiB in G10, 384/384 since G12, pointer exports/imports are i64 = BigInt), loop `mainloop`,
   video `webgl` (WebGL2 on the host's OffscreenCanvas, no SDL video / page listeners), pull audio, native save, pads,
   mouse + `rtw_pointer_lock`, rumble, 16 options, 3 extra buttons (Reload, Crouch, Screenshot -> PNG ->
   `rtw_export_file`). `ge007.romfill` is `files.data` (hashed). Sidecar cache in the sandbox origin's IndexedDB
@@ -155,7 +159,7 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   `scripts/rtw/eepcheck.mjs`), handed back after a reload and read as the EEPROM, sidecars from IndexedDB on the
   second start; built host: online boot, servers stopped, offline reload, boot from the caches with the remembered
   ROM, audio through the host's AudioWorklet, no request to the mock.
-- **Not tested**: mouse motion (headless Chrome refuses pointer lock), real gamepads / rumble, phones (2112 MiB),
+- **Not tested**: mouse motion (headless Chrome refuses pointer lock), real gamepads / rumble, phones (384 MiB since G12),
   pads 1-3 in a split-screen match.
 - **Host notes** (retrowser repo, not changed): its AudioWorklet does not load under `npm run dev`; v1 has no netplay
   yet, no absolute pointer, no config persistence, no import path for recordings (`docs/web/RTW.md`).

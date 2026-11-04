@@ -19,7 +19,7 @@
   "module": { "factory": "createGoldenEye", "loop": "mainloop" },
   "video": "webgl",
   "hz": 50,
-  "memory": { "initialMB": 2112, "maximumMB": 2112, "memory64": true },
+  "memory": { "initialMB": 384, "maximumMB": 384, "memory64": true },
   "save": { "kind": "eeprom", "size": 512 },
   "controls": {
     "extra": [
