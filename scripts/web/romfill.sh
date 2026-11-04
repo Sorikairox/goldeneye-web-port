@@ -6,7 +6,9 @@
 #   scripts/web/romfill.sh [region]      (needs the dev ROM copy data/ge007.<region>.z64)
 set -euo pipefail
 R=${1:-pal-final}
-B=/build/web; T=/build/tools
+# defaults = the web build; scripts/rtw/build_rtw.sh points these at its own tree and output dir
+B=${ROMFILL_BUILD:-/build/web}; T=/build/tools
+OUT=${ROMFILL_OUT:-build-web/site}; REP=${ROMFILL_REPORTS:-build-web}
 ROM=data/ge007.$R.z64
 mkdir -p $T
 for t in romfill romscan; do
@@ -18,10 +20,10 @@ if [ ! -f "$ROM" ]; then
   echo "romfill: $ROM missing: cannot strip the ROM-derived data. Put the dev ROM copy there, or build"
   echo "         with GE_NOSTRIP=1 for an unstripped dev-only site (marked DEV-UNSTRIPPED, refused by"
   echo "         scripts/web/deploy_check.sh)."
-  rm -f build-web/site/ge007.romfill build-web/site/ge007.wasm
+  rm -f $OUT/ge007.romfill $OUT/ge007.wasm
   exit 1
 fi
-rm -f build-web/site/DEV-UNSTRIPPED
-node $T/romfill.js "$ROM" $B/ge007.wasm $B/ge007.map build-web/site/ge007.wasm build-web/site/ge007.romfill \
-  build-web/romfill-report.tsv
-node $T/romscan.js -t build-web/romscan.tsv "$ROM" build-web/site/* | tail -1 | sed 's/^/romscan (site): /' || true
+rm -f $OUT/DEV-UNSTRIPPED
+node $T/romfill.js "$ROM" $B/ge007.wasm $B/ge007.map $OUT/ge007.wasm $OUT/ge007.romfill \
+  $REP/romfill-report.tsv
+node $T/romscan.js -t $REP/romscan.tsv "$ROM" $OUT/* | tail -1 | sed 's/^/romscan (site): /' || true

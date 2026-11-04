@@ -10,6 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 . scripts/web/env.sh
 SITE=${1:-build-web/site}; MIN=${2:-64}
+MAP=${ROMSCAN_MAP:-/build/web/ge007.map}   # link map of the scanned wasm (scripts/rtw/build_rtw.sh: /build/rtw)
 ge_ensure
 scripts/web/lockrun.sh /tmp/goldeneye-build.lock docker exec -w /src "$GE_DEV" bash -c "set -e
   mkdir -p /build/tools
@@ -17,6 +18,6 @@ scripts/web/lockrun.sh /tmp/goldeneye-build.lock docker exec -w /src "$GE_DEV" b
     emcc -O2 -sUSE_ZLIB=1 -sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4gb tools_web/romscan.c -o /build/tools/romscan.js
   fi
   node /build/tools/romscan.js -m $MIN -t build-web/romscan.tsv data/ge007.pal-final.z64 \$(find $SITE -type f | sort) || true
-  python3 tools_web/romscan_attr.py build-web/romscan.tsv $SITE/ge007.wasm /build/web/ge007.map scripts/web/romscan.allow \
+  python3 tools_web/romscan_attr.py build-web/romscan.tsv $SITE/ge007.wasm $MAP scripts/web/romscan.allow \
     && echo 'romscan: PASS (no ROM-derived runs >= $MIN bytes outside the allowlist)' \
     || { echo 'romscan: FAIL (see above; full list in build-web/romscan.tsv)'; exit 1; }"
