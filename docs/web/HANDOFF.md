@@ -14,6 +14,11 @@ no longer zeroes short coincidental pieces of the string pool / port tables, so 
 loads and saves all keys, and the key bindings have their real defaults. (G10, the retrowser build, is on branch
 `web-rtw`.)
 
+G10: **retrowser.app v1 build** (branch `web-rtw`, built files on local branch `rtw-dist`; nothing deployed or
+pushed): a separate build target `-DGE_RTW=ON` (`scripts/rtw/build_rtw.sh` -> `build/rtw/`), the game as a worker
+module for the retrowser host. Details, decisions and what v1 lacks: `docs/web/RTW.md`; section "retrowser build
+(G10)" below.
+
 G9: **offline play**: after one visit the site works with no network (section "Offline play (G9)" below). Page option
 "Offline play", default on.
 
@@ -118,6 +123,55 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
 - probe.mjs `PROBE_KEYS` now sends key codes for Escape, Enter, F10 and the arrows (SDL maps by keyCode).
 - Site build id (sw-build) `7d9d3bcb5d2a697d`; ge007.js unchanged (9eff2711…), ge007.wasm 3c302b2b…, ge007.romfill
   704abf7e….
+## retrowser build (G10, 2026-11-05)
+
+- **What**: `GE_RTW` CMake option, own tree `/build/rtw`; `port/rtw/{rtw.c,gfx_rtw.cpp,rtw_lib.js}` replace the
+  page-facing web files (`webaudio.c`, `webpage.c`, `websave.c`, `gfx_sdl2.cpp`). Classic-script MODULARIZE factory
+  `createGoldenEye`, `-sENVIRONMENT=worker`, `-sDYNAMIC_EXECUTION=0`, wasm from `Module.wasmBinary`, MEMORY64=2 kept
+  (manifest `memory.memory64: true`, 2112/2112 MiB, pointer exports/imports are i64 = BigInt), loop `mainloop`,
+  video `webgl` (WebGL2 on the host's OffscreenCanvas, no SDL video / page listeners), pull audio, native save, pads,
+  mouse + `rtw_pointer_lock`, rumble, 16 options, 3 extra buttons (Reload, Crouch, Screenshot -> PNG ->
+  `rtw_export_file`). `ge007.romfill` is `files.data` (hashed). Sidecar cache in the sandbox origin's IndexedDB
+  (`ge007-rtw`). No URL parameters / ENV / fetches.
+- **Web build untouched**: no shared source changed (port hooks are `-Wl,--wrap` in the rtw link only). Every
+  `build-web/site` file has the same SHA-256 before and after (checked in this worktree; wasm
+  5536c556…, js 9eff2711…). Guarded `#if GE_RTW` blocks in shared files were tried first and changed the site
+  wasm: its DWARF line tables move with any inserted line.
+- **True save size: 4 Kbit (512 B)**, not 16 Kbit: the game's libultra probes only the 4K type and refuses blocks
+  > 64; file2.c uses exactly 512 B. The rtw save is the native big-endian image; conversion from / to the port's
+  little-endian 2 KB image in rtw.c (D514 rules one way, re-stamp with the game CRC the other).
+- **Found (web site bug, not fixed there)**: the template zeroes string-pool bytes that occur in the ROM
+  (`Video.AspectMode`, `Input.MouseSensitivity`, `Game.SkipIntro`, …); the option registrations run from C
+  constructors before the fill and copy those keys broken, so the deployed site cannot load those keys from its ini
+  (`optionsoverlay: option '…' not registered` in every web log; bind default `'Do'`). The rtw build queues the
+  registrations until the fill. A web fix needs the same deferral (or key pointers) and a site rebuild.
+- **Checks** (all in `port_work/rtw/`, local only): `rtw-check build/rtw --rom <roms>/GoldenEye_007_Europe.z64` OK
+  (no ROM block in any file), `deploy_check.sh build/rtw` OK (romscan 4 runs / 280 B, allowlisted zlib tables),
+  signature mismatches 0. e2e (`scripts/rtw/e2e_rtw.mjs`, retrowser host + its GitHub mock serving `build/rtw`, one
+  muted headless Chrome): dev host: boot (logos, gun barrel, title, Start/A through the menus into Dam; pacing
+  50.0 retraces/s, ~60 browser frames/s), pad input (Start, A, Z, stick: Bond walks, ammo 7 -> 6 + bullet hole),
+  "Click to use the mouse" shown in a stage, screenshot in Saved files, options applied, audio drained and played
+  (ScriptProcessor in Vite dev), save stored 512 B with all six regions valid in N64 order (independent JS CRC,
+  `scripts/rtw/eepcheck.mjs`), handed back after a reload and read as the EEPROM, sidecars from IndexedDB on the
+  second start; built host: online boot, servers stopped, offline reload, boot from the caches with the remembered
+  ROM, audio through the host's AudioWorklet, no request to the mock.
+- **Not tested**: mouse motion (headless Chrome refuses pointer lock), real gamepads / rumble, phones (2112 MiB),
+  pads 1-3 in a split-screen match.
+- **Host notes** (retrowser repo, not changed): its AudioWorklet does not load under `npm run dev`; v1 has no netplay
+  yet, no absolute pointer, no config persistence, no import path for recordings (`docs/web/RTW.md`).
+
+```sh
+GE_DEV=goldeneye-rtw-dev bash scripts/rtw/build_rtw.sh       # build/rtw/ + retrowser.json, rtw-hash, deploy_check, rtw-check
+scripts/web/lockrun.sh /tmp/goldeneye-chrome.lock node scripts/rtw/e2e_rtw.mjs dev build/rtw port_work/rtw/dev
+scripts/web/lockrun.sh /tmp/goldeneye-chrome.lock node scripts/rtw/e2e_rtw.mjs offline build/rtw port_work/rtw/off
+```
+
+### Traps found in G10
+- Any line inserted in a shared source (even inside `#if GE_RTW`) changes the site wasm (DWARF line tables): use
+  link wraps for build-variant hooks when the other build must stay byte-identical.
+- Strings printed or copied before the template fill can be cut short (rtw.c logs its build id after the fill).
+- `deploy_check.sh` / `romscan.sh` take the build lock themselves: a script holding the lock deadlocks on them.
+- The retrowser host shows "Remember this ROM" only after the download; check it after `[data-field=rom]` appears.
 
 ## Offline play (G9, 2026-11-02)
 
@@ -515,6 +569,7 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
 | native reference (G7) | `scripts/web/native_ref.sh` (aarch64 Linux container, Xvfb/llvmpipe, `GE_PCDUMP` -> PNG via `scripts/web/ppm2png.py`), CMake `GE_LP64_GAME_DEFINE` |
 | det stop / dark repro (G7) | `GE_DETSTOP` in `port/src/web/webnet.c`, `ENV_DET_OK` in `port/web/net.js`, `scripts/web/darkdet.sh` |
 | touch controls (G8) | page `port/web/touch.js` (+ `index.html` markup/CSS, `main.js` GETouch.started); C `port/src/web/webtouch.c`, merge in `port/src/input.c` (`geWebTouchMerge`, `stickSolitare`); tests `scripts/web/phone_test.sh`, probe.mjs `PROBE_MOBILE`/`PROBE_STEPS`, `touchpress.js` |
+| retrowser build (G10) | `port/rtw/{rtw.c,gfx_rtw.cpp,rtw_lib.js}`, CMake `GE_RTW`, `scripts/rtw/{build_rtw.sh,retrowser.template.json,e2e_rtw.mjs,eepcheck.mjs}`, `docs/web/RTW.md` |
 | deploy gate | `tools_web/romscan.c`, `tools_web/romscan_attr.py`, `scripts/web/romscan.{sh,allow}`, `scripts/web/deploy_check.sh` |
 
 ## Traps found in G7
