@@ -18,19 +18,19 @@
   "files": {
     "wasm": {
       "path": "ge007.wasm",
-      "sha256": "3bb33f64f584bc7f795cb418b3a258cfd6761409204a29f7f1eb475a79ae79c4",
-      "size": 3222550
+      "sha256": "2acc111369379544f3c6ce3a43073693024b6df95ee48fd81221c2852a946579",
+      "size": 3222378
     },
     "js": {
       "path": "ge007.js",
-      "sha256": "042e938fd6cb53aae64e6dd67ab46c18ef7b75af0d3cdf5726e877d24e14582b",
+      "sha256": "ddcaa6259028519ffa5a7678c3a43a7c464e7e077a4ed0147d4deeed8975bf4c",
       "size": 454866
     },
     "data": [
       {
         "path": "ge007.romfill",
-        "sha256": "81160105b07ee7a995adc3d099ede347463edc9ccfc38d31ccc9ef71187265a9",
-        "size": 289832
+        "sha256": "6661d877ca84071885db8a853fc4f638c1a4db681124fdf5a7c711ff30a9a672",
+        "size": 175092
       }
     ]
   },
@@ -41,8 +41,8 @@
   "video": "webgl",
   "hz": 50,
   "memory": {
-    "initialMB": 2112,
-    "maximumMB": 2112,
+    "initialMB": 384,
+    "maximumMB": 384,
     "memory64": true
   },
   "save": {
