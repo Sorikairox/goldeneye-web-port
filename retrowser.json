@@ -1,0 +1,238 @@
+{
+  "retrowser": 1,
+  "id": "goldeneye-eu",
+  "title": "GoldenEye 007 (Europe)",
+  "platform": "n64",
+  "rom": {
+    "accept": [
+      ".z64",
+      ".n64",
+      ".v64"
+    ],
+    "sha1": [
+      "167c3c433dec1f1eb921736f7d53fac8cb45ee31"
+    ],
+    "byteswap": "auto",
+    "maxSize": 16777216
+  },
+  "files": {
+    "wasm": {
+      "path": "ge007.wasm",
+      "sha256": "3bb33f64f584bc7f795cb418b3a258cfd6761409204a29f7f1eb475a79ae79c4",
+      "size": 3222550
+    },
+    "js": {
+      "path": "ge007.js",
+      "sha256": "042e938fd6cb53aae64e6dd67ab46c18ef7b75af0d3cdf5726e877d24e14582b",
+      "size": 454866
+    },
+    "data": [
+      {
+        "path": "ge007.romfill",
+        "sha256": "81160105b07ee7a995adc3d099ede347463edc9ccfc38d31ccc9ef71187265a9",
+        "size": 289832
+      }
+    ]
+  },
+  "module": {
+    "factory": "createGoldenEye",
+    "loop": "mainloop"
+  },
+  "video": "webgl",
+  "hz": 50,
+  "memory": {
+    "initialMB": 2112,
+    "maximumMB": 2112,
+    "memory64": true
+  },
+  "save": {
+    "kind": "eeprom",
+    "size": 512
+  },
+  "controls": {
+    "extra": [
+      {
+        "bit": 16,
+        "label": "Reload"
+      },
+      {
+        "bit": 17,
+        "label": "Crouch"
+      },
+      {
+        "bit": 18,
+        "label": "Screenshot"
+      }
+    ]
+  },
+  "options": [
+    {
+      "id": 1,
+      "label": "Aspect ratio",
+      "type": "enum",
+      "default": 1,
+      "choices": [
+        {
+          "value": 0,
+          "label": "Fill (widescreen)"
+        },
+        {
+          "value": 1,
+          "label": "Original 4:3"
+        },
+        {
+          "value": 2,
+          "label": "16:9"
+        },
+        {
+          "value": 3,
+          "label": "21:9"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "label": "Resolution",
+      "type": "enum",
+      "default": 1,
+      "choices": [
+        {
+          "value": 0,
+          "label": "480 lines"
+        },
+        {
+          "value": 1,
+          "label": "Screen"
+        },
+        {
+          "value": 2,
+          "label": "Screen, high DPI"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "label": "Skip intro",
+      "type": "bool",
+      "default": 0
+    },
+    {
+      "id": 9,
+      "label": "Control style",
+      "type": "enum",
+      "default": 0,
+      "choices": [
+        {
+          "value": 0,
+          "label": "Extended"
+        },
+        {
+          "value": 1,
+          "label": "Original"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "label": "Mouse sensitivity %",
+      "type": "int",
+      "default": 100,
+      "min": 10,
+      "max": 500
+    },
+    {
+      "id": 4,
+      "label": "Invert mouse Y",
+      "type": "bool",
+      "default": 0
+    },
+    {
+      "id": 10,
+      "label": "Rumble",
+      "type": "bool",
+      "default": 1
+    },
+    {
+      "id": 5,
+      "label": "Field of view %",
+      "type": "int",
+      "default": 100,
+      "min": 50,
+      "max": 150
+    },
+    {
+      "id": 6,
+      "label": "Draw distance %",
+      "type": "int",
+      "default": 200,
+      "min": 100,
+      "max": 800
+    },
+    {
+      "id": 7,
+      "label": "Texture filter",
+      "type": "enum",
+      "default": 1,
+      "choices": [
+        {
+          "value": 0,
+          "label": "Nearest"
+        },
+        {
+          "value": 1,
+          "label": "Bilinear"
+        },
+        {
+          "value": 2,
+          "label": "N64 3-point"
+        },
+        {
+          "value": 3,
+          "label": "Trilinear"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "label": "HUD scale %",
+      "type": "int",
+      "default": 100,
+      "min": 75,
+      "max": 150
+    },
+    {
+      "id": 11,
+      "label": "Screen shake %",
+      "type": "int",
+      "default": 100,
+      "min": 0,
+      "max": 200
+    },
+    {
+      "id": 12,
+      "label": "No hit flash",
+      "type": "bool",
+      "default": 0
+    },
+    {
+      "id": 14,
+      "label": "Hide crosshair",
+      "type": "bool",
+      "default": 0
+    },
+    {
+      "id": 15,
+      "label": "Show FPS",
+      "type": "bool",
+      "default": 0
+    },
+    {
+      "id": 8,
+      "label": "All levels unlocked",
+      "type": "bool",
+      "default": 0
+    }
+  ],
+  "license": "MIT (build code); the game data comes from your ROM",
+  "source": "https://github.com/Sorikairox/goldeneye-web-port"
+}
