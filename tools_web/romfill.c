@@ -238,6 +238,14 @@ static int selected(const char *in)
     return s && (!strncmp(s + 2, ".data", 5) || !strncmp(s + 2, ".rodata", 7));
 }
 
+/* pass 2 (short anchored pieces) applies to the decomp's and the assets' data only */
+static int pass2_selected(const char *in)
+{
+    if (strncmp(in, "CMakeFiles/ge007.dir/", 21)) return 0;
+    const char *p = in + 21;
+    return !strncmp(p, "src/", 4) || !strncmp(p, "assets/", 7) || !strncmp(p, "srcfix/", 7);
+}
+
 static void parse_map(char *m)
 {
     for (char *line = strtok(m, "\n"); line; line = strtok(NULL, "\n")) {
@@ -259,6 +267,8 @@ static Fill *fills;
 static long nfills, capfills;
 
 /* ---------------------------------------------------------------- pass 2 ---
+ * (decomp + assets symbols only, pass2_selected: the string pool and the port's C tables keep their
+ * pass-1 runs; short pieces there were coincidences that broke constructor-time option keys.)
  * Short pieces (< MINRUN) between pointers and padding: vertices (12 bytes 16-bit swapped + 4 bytes
  * as is), display-list words (the PC Gfx keeps each N64 word in the low half of a u64), mixed
  * u8/s16/f32 struct fields. Walking each symbol in address order, the last fill (pass 1 or 2) of
@@ -316,7 +326,7 @@ static long pass_gfx(uint8_t *tmpl, long minrun)
     for (int si = 0; si < nsyms; si++) {
         Sym *sy = &syms[si];
         long fo = mem2img(sy->addr, sy->size);
-        if (fo < 0 || sy->size < 32 || sy->size % 16 || ((img_lo + fo) & 7)) continue;
+        if (fo < 0 || sy->size < 32 || sy->size % 16 || ((img_lo + fo) & 7) || !pass2_selected(sy->name)) continue;
         const uint8_t *q = img + fo;
         int gfx = 1;
         for (long k = 0; k < sy->size && gfx; k += 16)
@@ -464,6 +474,14 @@ static long pass2(uint8_t *tmpl, long minrun)
         Sym *sy = &syms[si];
         long fo = mem2img(sy->addr, sy->size);
         if (fo < 0 || sy->size <= 0) continue;
+        /* Pass 2 only for the decomp and its assets. Not for the merged string pool (every TU's strings:
+         * port, SDL, libc next to the game's) nor the port's own C tables: there, pieces < MINRUN near an
+         * anchor are coincidences (ASCII letters, small ints), not ROM data ("Input.MouseSensitivity" lost
+         * 4 bytes, config.c's padded key copies, video.c's preset table). The page fills after the C
+         * constructors, which register option keys and copy default bindings from these bytes, so such a
+         * piece broke them (100+ "option '...' not registered", bind default 'Do'). Those symbols keep
+         * their pass-1 runs (>= MINRUN: the game's names and paths, mixer.c's resample table). */
+        if (!pass2_selected(sy->name)) continue;
         long end = fo + sy->size;
         if (!nmru) {   /* nothing yet: anchor on an 8-byte block found anywhere */
             for (long k = fo; k + BLK <= end && !nmru; k++) {

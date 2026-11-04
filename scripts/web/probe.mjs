@@ -116,7 +116,8 @@ for (const ent of (process.env.PROBE_FILE || '').split(',').filter(Boolean)) {
 for (const ent of (process.env.PROBE_KEYS || '').split(',').filter(Boolean)) {
   const [t, code, dur] = ent.split(':');
   const key = code.startsWith('Key') ? code.slice(3).toLowerCase() : code === 'Space' ? ' ' : code;
-  const vk = code.startsWith('Key') ? code.charCodeAt(3) : code === 'Space' ? 32 : code === 'Enter' ? 13 : 0;
+  const VK = { Space: 32, Enter: 13, Escape: 27, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, F10: 121 };
+  const vk = code.startsWith('Key') ? code.charCodeAt(3) : VK[code] || 0;
   const ev = (type) => call('Input.dispatchKeyEvent', { type, code, key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
   setTimeout(() => { ev('keyDown'); setTimeout(() => ev('keyUp'), +dur * 1000); }, +t * 1000);
 }

@@ -3,7 +3,12 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 .. G9, 2026-11-02)
+## Current state (after G3 .. G9 + G11, 2026-11-05)
+
+G11: **option keys fixed on the site** (section "Option keys and the template strip (G11)" below): the template strip
+no longer zeroes short coincidental pieces of the string pool / port tables, so every option registers, the ini
+loads and saves all keys, and the key bindings have their real defaults. (G10, the retrowser build, is on branch
+`web-rtw`.)
 
 G9: **offline play**: after one visit the site works with no network (section "Offline play (G9)" below). Page option
 "Offline play", default on.
@@ -47,6 +52,32 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## Option keys and the template strip (G11, 2026-11-05)
+
+- **Bug** (found in G10): the site's template zeroed bytes of the merged string pool and of port C tables that
+  happened to match the ROM (pass 2 of `tools_web/romfill.c`: 1-15-byte pieces near an anchor, e.g. 4 bytes of
+  `Input.MouseSensitivity`, `Debug.` in config.c's padded key copies). The port registers its options from C
+  constructors, which run before the page fills the template, and `configRegister*` copy the key: 110
+  `optionsoverlay: option '…' not registered` per boot, those keys could not be loaded / saved through the ini,
+  `Input.Bind.Back: unknown binding 'Do'` (default `S,Down`).
+- **Fix: the strip, not a deferral.** Pass 2 (and the display-list pass) now run only on the decomp's and the
+  assets' symbols (`pass2_selected`: `src/`, `srcfix/`, `assets/`). The string pool and port tables keep their
+  pass-1 runs (>= 16 bytes: the game's names and paths, mixer.c's resample table). Why not the G10 deferral:
+  queueing `configRegister*` fixes the keys only; default values copied at constructor time (the bind strings in
+  `inputConfigInit`, any other constructor-time string) stay broken, and every future pre-fill reader would need its
+  own hook. The pieces dropped were coincidences, not ROM data; all >= 16-byte runs are still removed (romscan
+  unchanged: 4 runs / 280 B, allowlisted; deploy_check OK). Numbers: docs/web/ROMDATA.md section 3.
+- **Tests** (`port_work/g11/`): boot: 1 warning left, `Game.CheckUpdates` (updatecheck.c is not compiled into the
+  web build; the unstripped build logs the same); no "unknown binding". The fresh `ge007.ini` of the stripped
+  build is byte-identical to a `GE_NOSTRIP=1` build's (147 keys; `[Input.Bind]` Back = `S,Down`, Fire = `Mouse 1`,
+  ...). F10 overlay (`GE_OPTIONSOVERLAY=1`, real key events): Field of view 60 -> 70 deg and No hit flash on (both
+  were broken keys), reload in the same profile: both shown and in the ini. fillcheck.py == page `&fillcheck`
+  (sha256 fbedeaf9…); route_dam.sh to Dam gameplay (walk, fire, 50 retraces/s); level_sweep dam/surface/egypt and
+  mp_sweep 2P temple: no trap; save_test.sh all PASS; offline_test.sh (Android emulation) PASS.
+- probe.mjs `PROBE_KEYS` now sends key codes for Escape, Enter, F10 and the arrows (SDL maps by keyCode).
+- Site build id (sw-build) `7d9d3bcb5d2a697d`; ge007.js unchanged (9eff2711…), ge007.wasm 3c302b2b…, ge007.romfill
+  704abf7e….
 
 ## Offline play (G9, 2026-11-02)
 

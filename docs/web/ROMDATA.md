@@ -65,6 +65,18 @@ Build half, `tools_web/romfill.c` (run by `scripts/web/romfill.sh` from `build.s
 EU result: 13,462 ranges, 155,056 bytes filled (82,093 of them non-zero); the template differs from
 the original in 82,093 bytes.
 
+G11 (2026-11-05): pass 2 and the display-list pass run only on the decomp's and the assets' symbols
+(`src/`, `srcfix/`, `assets/`; `pass2_selected`). The merged string pool and the port's C tables keep
+their pass-1 runs (>= 16 bytes) only. Reason: the C constructors run before the page fills the
+template, and they register the ini keys and copy the default key bindings from those bytes; pass 2's
+short pieces there were coincidences (ASCII letters near an anchor, a few small ints), not ROM data,
+and zeroed parts of 100+ option keys (`Video.AspectMode` -> "not registered", bind default `S,Down` ->
+`'Do'`). A deferral of the registrations would not have covered the default values copied at
+constructor time. EU now: 7,834 ranges, 139,057 bytes (pass 1: 2,340 / 113,892; pass 2: 5,494 /
+25,165); string pool 5,580 of 89,575 non-zero bytes filled (was 21,387). Every run >= 16 bytes is
+still filled; romscan unchanged (4 runs / 280 B, allowlisted). Check: the fresh ini of the stripped
+build equals that of a `GE_NOSTRIP=1` build byte for byte.
+
 Gates:
 - runtime CRC check in `ge_web_romfill` (filled bytes + whole symbol extents);
 - `scripts/web/fillcheck.py ORIGINAL.wasm site/ge007.romfill` vs the page's `&fillcheck` line:
