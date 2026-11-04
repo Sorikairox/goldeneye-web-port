@@ -4,26 +4,32 @@
 The native builds define every ROM asset symbol as an ABSOLUTE address
 (`.set sym, 0x10000000 + rom_offset`) and map the .z64 at 0x10000000. wasm
 object files cannot carry absolute data symbols, so this emits the same labels
-as offsets inside one 256 MiB `.rodata..ge_cart` section. CMake links that
+as offsets inside one `.rodata..ge_cart` section (cart window + the N64 DRAM arena). CMake links that
 object first and the web build uses GLOBAL_BASE = 0x10000000, so the section
 starts exactly at 0x10000000 and every label keeps its native value (checked at
 run time by romdata.c). The section is all zeros (wasm-opt's memory packing
 drops it from the .wasm file); romdata.c copies the player's ROM and the
-sidecars into it at boot.
+sidecars into it at boot. G12: the window is DRAM_BASE - 0x10000000 bytes (32 MiB; the EU ROM and
+both sidecars take ~17 MiB) and the section continues with `ge_dram_window`, the 8 MiB N64 DRAM arena
+(port/src/dram.c checks its address), so the static data starts right after it instead of at 0x20000000.
 
 Input and output contain only symbol names and offsets, no ROM bytes.
 
-usage: gen_cart_wasm.py port/src/romassets_e.s out.s
+usage: gen_cart_wasm.py port/src/romassets_e.s out.s DRAM_BASE
 """
 import re
 import sys
 
 CART_BASE = 0x10000000
-WINDOW = 0x10000000          # 256 MiB: static data then starts at 0x20000000
+DRAM_SIZE = 0x800000         # 8 MiB, portaddr.h PORT_DRAM_SIZE
 
 
 def main():
     src, dst = sys.argv[1], sys.argv[2]
+    dram = int(sys.argv[3], 0)
+    window = dram - CART_BASE
+    if window <= 0 or dram & 0xFFFFFF:
+        sys.exit("gen_cart_wasm: DRAM base %#x must be a 16 MiB aligned address above the cart base" % dram)
     syms = {}
     for line in open(src):
         m = re.match(r"\s*\.set\s+([A-Za-z_][A-Za-z0-9_]*)\s*,\s*(0x[0-9A-Fa-f]+|\d+)", line)
@@ -32,11 +38,11 @@ def main():
     if not syms:
         sys.exit("gen_cart_wasm: no .set lines in %s" % src)
     for name, v in syms.items():
-        if not (CART_BASE <= v < CART_BASE + WINDOW):
+        if not (CART_BASE <= v < CART_BASE + window):
             sys.exit("gen_cart_wasm: %s = %#x outside the cart window" % (name, v))
 
     # Group labels by address; each address gets one .skip to the next one.
-    addrs = sorted(set(syms.values()) | {CART_BASE, CART_BASE + WINDOW})
+    addrs = sorted(set(syms.values()) | {CART_BASE, CART_BASE + window})
     by_addr = {}
     for name, v in syms.items():
         by_addr.setdefault(v, []).append(name)
@@ -46,7 +52,7 @@ def main():
     out.append('.section .rodata..ge_cart,"",@')
     out.append(".globl ge_cart_window")
     out.append("ge_cart_window:")
-    out.append(".size ge_cart_window, %#x" % WINDOW)
+    out.append(".size ge_cart_window, %#x" % window)
     for a, nxt in zip(addrs, addrs[1:]):
         for name in sorted(by_addr.get(a, [])):
             out.append(".globl %s" % name)
@@ -56,10 +62,14 @@ def main():
             out.append(".size %s, %#x" % (name, nxt - a))
         if nxt > a:
             out.append(".skip %#x" % (nxt - a))
-    for name in sorted(by_addr.get(CART_BASE + WINDOW, [])):
+    for name in sorted(by_addr.get(CART_BASE + window, [])):
         out.append(".globl %s" % name)
         out.append("%s:" % name)
         out.append(".size %s, 0" % name)
+    out.append(".globl ge_dram_window")
+    out.append("ge_dram_window:")
+    out.append(".size ge_dram_window, %#x" % DRAM_SIZE)
+    out.append(".skip %#x" % DRAM_SIZE)
     open(dst, "w").write("\n".join(out) + "\n")
 
 

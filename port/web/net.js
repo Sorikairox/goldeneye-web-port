@@ -565,7 +565,8 @@
     if (diff.length) {
       const a = N.M._ge_net_page_info(2, diff[0]) >>> 0, size = N.M._ge_net_page_info(3, diff[0]), syms = await symbols();
       const list = syms.filter(([s, l]) => s < a + size && s + Math.max(l, 1) > a);
-      const label = a >= 0x80000000 ? `N64 DRAM ${hex(a)}..${hex(a + size - 1)}` : `wasm ${hex(a)}..${hex(a + size - 1)}`;
+      // N64 DRAM arena at 0x12000000 + 8 MiB (G12 memory map, CMakeLists.txt GE_WEB_DRAM_BASE)
+      const label = a >= 0x12000000 && a < 0x12800000 ? `N64 DRAM ${hex(a)}..${hex(a + size - 1)}` : `wasm ${hex(a)}..${hex(a + size - 1)}`;
       where = `first different page ${diff[0]} (${label}${list.length ? `, ${list.length} symbol(s) in it: ` + list.slice(0, 6).map((x) => x[2]).join(', ') + (list.length > 6 ? ', …' : '') : ''})`;
     }
     const report = { frame: m.frame, ch: from, where, pages: diff.length, firstPages: diff.slice(0, 8), stacks };

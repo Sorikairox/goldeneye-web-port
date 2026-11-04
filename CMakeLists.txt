@@ -340,13 +340,19 @@ endif()
 # base at startup.
 if(EMSCRIPTEN)
   # Web memory map (docs/web/PLAN.md "Memory map"):
-  #   [0, 0x10000000)          unused null zone (GLOBAL_BASE)
-  #   [0x10000000, 0x20000000) cart window: ROM + sidecars, the first .rodata
+  #   [0, 0x10000000)          unused null zone (GLOBAL_BASE; fast3d reads
+  #                            values < 0x10000000 as segmented / physical)
+  #   [0x10000000, 0x12000000) cart window: ROM + sidecars, the first .rodata
   #                            object (generated romassets_<r>_wasm.s), so every
   #                            ROM asset label keeps its 0x10000000+offset value
-  #   [0x20000000, ...)        static data, stack, heap (kept below 2 GiB: the
+  #   [0x12000000, +8 MiB)     N64 DRAM, one view (V1 == K0, see portaddr.h), the
+  #                            tail of the same section; 16 MiB aligned, so
+  #                            `ptr & 0xFFFFFF` is the physical offset and
+  #                            `phys | base` the pointer, as with 0x80000000
+  #   [0x12800000, ...)        static data, stack, heap (all below 2 GiB: the
   #                            MEMORY64=2 JS glue mis-indexes higher addresses)
-  #   [0x80000000, +8 MiB)     N64 DRAM, one view (V1 == K0, see portaddr.h)
+  # G12 (was DRAM at 0x80000000 and data at 0x20000000: 2112 MiB of memory).
+  set(GE_WEB_DRAM_BASE 0x12000000)
   # Zero-initialised game globals go to .data (packed away by wasm-opt) so the
   # game's own globals sit with the rest of the static data at 0x2xxxxxxx.
   add_compile_options(-fno-zero-initialized-in-bss -sMEMORY64=2)
@@ -356,7 +362,8 @@ if(EMSCRIPTEN)
   # C TUs both names point at the decomp's functions, which keeps the native
   # behaviour; C++ (fast3d) keeps the host libc.
   add_compile_options($<$<COMPILE_LANGUAGE:C>:-Dstrtol=ge_strtol> $<$<COMPILE_LANGUAGE:C>:-Dsprintf=ge_sprintf>)
-  add_definitions(-DPORT_DRAM_V1_BASE=0x80000000UL -DGE_WEB=1)
+  add_definitions(-DPORT_DRAM_V1_BASE=${GE_WEB_DRAM_BASE}UL -DPORT_DRAM_K0_BASE=${GE_WEB_DRAM_BASE}UL
+                  -DPORT_CART_END=${GE_WEB_DRAM_BASE}UL -DGE_WEB=1)
   add_compile_options("SHELL:-include ${CMAKE_SOURCE_DIR}/port/src/web/webdram.h")
 elseif(MINGW)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--disable-dynamicbase")
@@ -493,11 +500,12 @@ if(NOT EXISTS ${SRC_ROMASSETS})
 endif()
 if(EMSCRIPTEN)
   # wasm object files have no absolute symbols: re-express the same labels as
-  # offsets inside a 256 MiB .rodata section linked first at GLOBAL_BASE
-  # 0x10000000 (scripts/web/gen_cart_wasm.py; offsets only, no ROM bytes).
+  # offsets inside a 32 MiB .rodata section linked first at GLOBAL_BASE
+  # 0x10000000, followed by the 8 MiB DRAM arena in the same section
+  # (scripts/web/gen_cart_wasm.py; offsets only, no ROM bytes).
   set(_WASM_CART "${CMAKE_BINARY_DIR}/romassets_${ASSET_REGION}_wasm.s")
   add_custom_command(OUTPUT "${_WASM_CART}"
-    COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/web/gen_cart_wasm.py" "${SRC_ROMASSETS}" "${_WASM_CART}"
+    COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/web/gen_cart_wasm.py" "${SRC_ROMASSETS}" "${_WASM_CART}" ${GE_WEB_DRAM_BASE}
     DEPENDS "${SRC_ROMASSETS}" "${CMAKE_SOURCE_DIR}/scripts/web/gen_cart_wasm.py")
   set(SRC_ROMASSETS "${_WASM_CART}")
   list(FILTER SRC_PORT EXCLUDE REGEX "port/src/(crash|updatecheck)\\.c$")
@@ -564,7 +572,7 @@ if(EMSCRIPTEN)
   # DRAM symbol used in a static initializer). Game sources stay untouched.
   set(_SRCFIX_lv          "")
   set(_SRCFIX_spectrum    "")
-  set(_SRCFIX_initanitable --abs "animations_frame_buffer=0x80000000UL+0x7FFD30")
+  set(_SRCFIX_initanitable --abs "animations_frame_buffer=${GE_WEB_DRAM_BASE}UL+0x7FFD30")
   set(_SRCFIX_initweaponanigroups --fn
       "get_ptr_allocated_block_for_vertices=void *ge_web_vertex_allocator(int)")
   foreach(_pwb lv spectrum initanitable initweaponanigroups)
@@ -790,7 +798,7 @@ if(EMSCRIPTEN)
 
   target_link_options(ge007 PRIVATE
     -sMEMORY64=2 -sUSE_SDL=2 -sUSE_ZLIB=1
-    -sGLOBAL_BASE=256mb -sINITIAL_MEMORY=2112mb -sALLOW_MEMORY_GROWTH=0
+    -sGLOBAL_BASE=256mb -sINITIAL_MEMORY=384mb -sALLOW_MEMORY_GROWTH=0
     -sSTACK_SIZE=4mb
     -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1
     -sGL_ENABLE_GET_PROC_ADDRESS=1

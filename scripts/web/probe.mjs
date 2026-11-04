@@ -42,7 +42,32 @@ const port = 9400 + (process.pid % 400);
 const ch = spawn(CH, ['--headless=new', `--user-data-dir=${prof}`, `--remote-debugging-port=${port}`,
   '--mute-audio', '--autoplay-policy=no-user-gesture-required', `--use-angle=${process.env.PROBE_ANGLE || 'swiftshader'}`, '--enable-unsafe-swiftshader',
   '--window-size=800,900', 'about:blank'], { stdio: 'ignore' });
-const done = (code) => { try { ch.kill('SIGKILL'); } catch (e) {} if (!keepProf) try { fs.rmSync(prof, { recursive: true, force: true }); } catch (e) {} process.exit(code); };
+// PROBE_MEM=1: sample the resident memory (ps RSS) of this Chrome's process tree every second (found by parent PID
+// from the Chrome this probe started): the page's renderer process alone, the GPU process, and the whole tree
+// (the sum double-counts shared pages); logs 'probe: memory peak ...' at the end
+const memPeak = { renderer: 0, gpu: 0, tree: 0, at: 0 };
+const memT0 = Date.now();
+const memTimer = process.env.PROBE_MEM ? setInterval(() => {
+  try {
+    const rows = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,rss=,command=']).toString().trim().split('\n').map((l) => {
+      const m = l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/); return m ? [+m[1], +m[2], +m[3], m[4]] : [0, 0, 0, ''];
+    });
+    const mine = new Set([ch.pid]); let grew = true;
+    while (grew) { grew = false; for (const [pid, ppid] of rows) if (mine.has(ppid) && !mine.has(pid)) { mine.add(pid); grew = true; } }
+    const my = rows.filter(([pid]) => mine.has(pid));
+    const max = (re) => my.filter((r) => re.test(r[3])).reduce((m, r) => Math.max(m, r[2]), 0);
+    const r = max(/--type=renderer/), g = max(/--type=gpu-process/), t = my.reduce((a, x) => a + x[2], 0);
+    if (r > memPeak.renderer) { memPeak.renderer = r; memPeak.at = (Date.now() - memT0) / 1000; }
+    memPeak.gpu = Math.max(memPeak.gpu, g); memPeak.tree = Math.max(memPeak.tree, t);
+  } catch (e) {}
+}, 1000) : null;
+const memReport = () => {
+  if (!memTimer) return;
+  clearInterval(memTimer);
+  const mb = (k) => (k / 1024).toFixed(0);
+  console.log(`probe: memory peak RSS: renderer ${mb(memPeak.renderer)} MiB (at ${memPeak.at.toFixed(0)} s), GPU process ${mb(memPeak.gpu)} MiB, whole tree ${mb(memPeak.tree)} MiB`);
+};
+const done = (code) => { memReport(); try { ch.kill('SIGKILL'); } catch (e) {} if (!keepProf) try { fs.rmSync(prof, { recursive: true, force: true }); } catch (e) {} process.exit(code); };
 for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => done(130));
 // the console is streamed to <outdir>/console.log as it arrives (with seconds since navigation), so a
 // hung page still leaves its last lines behind

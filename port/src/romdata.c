@@ -42,6 +42,7 @@ extern int snprintf(char *str, size_t maxsize, const char *format, ...);
 #include "system.h"
 #include "fs.h"
 #include "romdata.h"
+#include "portaddr.h"
 #include "pcmodels.h"
 #include "pccg.h"
 #include "romconvert.h"
@@ -370,13 +371,14 @@ int romdataInit(void)
         {
             u32 maplen = romSize + sideTotal + cgTotal;
 #if defined(GE_WEB)
-            /* Web: the cart window is a 256 MiB section the build placed at
-             * exactly CART_BASE (scripts/web/gen_cart_wasm.py); just check. */
+            /* Web: the cart window is a section the build placed at exactly
+             * CART_BASE, PORT_CART_END - CART_BASE bytes long (32 MiB, G12;
+             * scripts/web/gen_cart_wasm.py); just check. */
             extern unsigned char ge_cart_window[];
-            if ((uintptr_t)ge_cart_window != CART_BASE || maplen > 0x10000000u) {
+            if ((uintptr_t)ge_cart_window != CART_BASE || maplen > (u32)(PORT_CART_END - CART_BASE)) {
                 sysLogPrintf(LOG_ERROR, "romdataInit: cart window at %p (want 0x%08X), "
-                             "image %u bytes (max 0x10000000)", (void *)ge_cart_window,
-                             CART_BASE, maplen);
+                             "image %u bytes (max 0x%08X)", (void *)ge_cart_window,
+                             CART_BASE, maplen, (unsigned)(PORT_CART_END - CART_BASE));
                 free(img);
                 return -1;
             }

@@ -182,6 +182,10 @@ static void parse_wasm(const uint8_t *w, long n)
     }
 }
 
+/* Web memory map (CMakeLists.txt, G12): cart window 0x10000000 + 32 MiB, DRAM arena 0x12000000 + 8 MiB,
+ * static data from 0x12800000. */
+#define DATA_LO 0x12800000ull
+
 /* The data image: [img_lo, img_hi) in memory, with each byte's file offset (-1 where the
  * linker / wasm-opt left a zero gap between segments). */
 static uint64_t img_lo, img_hi;
@@ -192,7 +196,7 @@ static void build_image(const uint8_t *w)
 {
     img_lo = UINT64_MAX; img_hi = 0;
     for (int i = 0; i < ndsegs; i++) {
-        if (dsegs[i].addr < 0x20000000ull || dsegs[i].addr >= 0x80000000ull) continue;   /* cart window / DRAM */
+        if (dsegs[i].addr < DATA_LO) continue;   /* cart window + DRAM arena (all zero; filled at boot) */
         if (dsegs[i].addr < img_lo) img_lo = dsegs[i].addr;
         if (dsegs[i].addr + dsegs[i].n > img_hi) img_hi = dsegs[i].addr + dsegs[i].n;
     }
@@ -293,7 +297,7 @@ static void mark_pointers(void)
     for (long i = (long)((8 - (img_lo & 7)) & 7); i + 8 <= imn; i += 8) {
         uint64_t v = 0;
         for (int k = 7; k >= 0; k--) v = v << 8 | img[i + k];
-        if ((v >= 0x10000000ull && v < 0x30000000ull) || (v >= 0x80000000ull && v < 0x80800000ull))
+        if (v >= 0x10000000ull && v < 0x20000000ull)   /* cart, DRAM arena, static data (G12 map) */
             memset(ptrmask + i, 1, 8);
     }
 }

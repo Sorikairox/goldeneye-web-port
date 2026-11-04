@@ -70,16 +70,16 @@ void *dramReserve(void)
 #if defined(GE_WEB)
     /* Web build (docs/web/PLAN.md "Memory map"): wasm linear memory cannot map
      * one backing store twice, so there is ONE view with V1 == K0 ==
-     * 0x80000000 (portaddr.h via CMake): `offset | 0x80000000` and fast3d's
-     * `w1 + K0` land on the same bytes the game's V1 pointers use. s32-held
-     * arena pointers sign-extend to 0xffffffff8xxxxxxx in C, which the
-     * MEMORY64=2 lowering wraps back to the same 32-bit address on every load
-     * and store. The memory is part of the initial wasm memory (INITIAL_MEMORY
-     * > 0x80800000); the C heap must stay below it. */
-    extern void *sbrk(intptr_t);
-    void *brk = sbrk(0);
-    if ((uintptr_t)brk >= DRAM_V1_BASE) {
-        sysFatalError("dram: heap break %p reached the DRAM arena", brk);
+     * PORT_DRAM_V1_BASE (0x12000000 since G12, portaddr.h via CMake): fast3d's
+     * `w1 + K0` and the game's `phys | K0` land on the bytes the game's V1
+     * pointers use. The base is 16 MiB aligned (`ptr & 0xFFFFFF` = physical
+     * offset, as with 0x80000000 before) and above 0x10000000 (never read as a
+     * segmented address). The arena is the tail of the cart window section
+     * (ge_dram_window, scripts/web/gen_cart_wasm.py), so the linker keeps the
+     * static data, stack and heap after it; check that the build put it here. */
+    extern unsigned char ge_dram_window[];
+    if ((uintptr_t)ge_dram_window != DRAM_V1_BASE) {
+        sysFatalError("dram: arena at %p, want %p", (void *)ge_dram_window, (void *)DRAM_V1_BASE);
     }
     memset((void *)DRAM_V1_BASE, 0, DRAM_SIZE);
     return (void *)DRAM_V1_BASE;

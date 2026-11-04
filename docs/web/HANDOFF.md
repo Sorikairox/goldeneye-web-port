@@ -3,7 +3,11 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 .. G9 + G11, 2026-11-05)
+## Current state (after G3 .. G9 + G11 + G12, 2026-11-05)
+
+G12: **memory 2112 -> 384 MiB** (section "Memory map for phones (G12)" below): N64 DRAM moved from 0x80000000 to
+0x12000000 and the static data from 0x20000000 to 0x12800000; fast3d's 256 MiB texture upload buffer now grows on
+demand. Same frames at the same det retraces as before, saves byte-identical, sidecars and their cache unchanged.
 
 G11: **option keys fixed on the site** (section "Option keys and the template strip (G11)" below): the template strip
 no longer zeroes short coincidental pieces of the string pool / port tables, so every option registers, the ini
@@ -52,6 +56,42 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## Memory map for phones (G12, 2026-11-05)
+
+- **Before:** `INITIAL_MEMORY` 2112 MiB because the DRAM arena sat at 0x80000000 (+8 MiB) and the static data at
+  0x20000000 (after a 256 MiB cart window). Phones / 32-bit browsers refuse a 2 GiB+ ArrayBuffer.
+- **Now (web and rtw, same CMake):** cart window 0x10000000 + 32 MiB, DRAM `ge_dram_window` 0x12000000 + 8 MiB (tail
+  of the cart section, `scripts/web/gen_cart_wasm.py ... DRAM_BASE`), static data from 0x12800000, 4 MiB stack, heap
+  from ~0x13FA0000; **`-sINITIAL_MEMORY=384mb`** (fixed). Table: docs/web/PLAN.md 2.2.
+  - Why 0x12000000: 16 MiB aligned (so `ptr & 0xFFFFFF` = physical offset and `phys | base` = pointer, as with
+    0x80000000 and native 0x70000000); >= 0x10000000 (fast3d never takes it for a segmented address or a physical
+    offset; a base below 0x01000000 would have broken `& 0x00FFFFFF` users like objecthandler_2.c, one in
+    0x01..0x0F000000 would read as a segment); right after the ROM + sidecars (~17 MiB used of the 32).
+  - Code: CMake `GE_WEB_DRAM_BASE` -> `PORT_DRAM_V1_BASE = PORT_DRAM_K0_BASE = PORT_CART_END = 0x12000000` (portaddr.h
+    gets `PORT_CART_END`, default 0x20000000 native); the only live game site is title.c's gun-barrel vertex pointer
+    (`| (u32)PORT_DRAM_K0_BASE`, native value unchanged; the four `| 0x80000000` texnum reads in bg.c / propobj.c are
+    N64-only `#else` branches); fast3d `gfx_tex_source_is_c_array` cart test up to `PORT_CART_END`; `dram.c` checks
+    `ge_dram_window` (the heap is above the arena now); `romdata.c` window size check; `webnet.c` DRAM hash region and
+    desync test byte; `net.js` DRAM label; srcfix `animations_frame_buffer`; `tools_web/romfill.c` image start
+    0x12800000 and pointer-like range 0x10000000..0x20000000.
+  - **fast3d texture upload buffer** (`gfx_pc.cpp`): was `malloc(min(8192, GL max)^2 * 4)` = 256 MiB at init on
+    every GPU with an 8k limit (the largest allocation of the web build); now 1 MiB, grown before each import to
+    (size_bytes + line sizes) x 8 (4-bit -> RGBA32 worst case), new bytes zeroed. Native gets the same (less memory).
+- **Measured** (`port_work/g12/`): highest touched heap address 0x155D6000 (342 MiB) in all 21 solo levels, all 14 MP
+  setups (2-4 players) and at boot (sidecar conversion), so 384 MiB leaves ~42 MiB. Chrome (probe.mjs `PROBE_MEM=1`,
+  ps RSS of the probe's own Chrome tree), Dam 40 s / 4P Temple 40 s: renderer process swiftshader 410 / 399 MiB ->
+  366 / 367 MiB, ANGLE Metal 415 / 399 -> 367 / 369 MiB; GPU process unchanged (~400 swiftshader, ~180 Metal).
+- **Same behaviour:** det runs (4P menu route, `darkdet.sh` with `GE_DETSTOP` 1800 / 2600 / 3400) give byte-identical
+  screenshots on the G11 build and this one; state hashes differ by design (they include pointer values). netdet a1
+  vs a2 5864/5864 identical; recorder record/replay 68/68, mutated replay diverges at 2950; save_test 12/12 PASS and
+  its exported EEPROM is byte-identical to the G11 build's; sidecars byte-identical (same SHA-256), so the IndexedDB
+  sidecar cache (`sidecars-v<GECONV_VERSION>-<sha1>`) stays valid, no version bump; fillcheck equal; romscan 4 runs /
+  280 B, deploy_check OK; route_dam, level + MP sweeps (no trap), phone_test (Android), offline_test PASS; native
+  aarch64 reference build compiles and reaches Dam gameplay.
+- **Note:** `.gerec` recordings made with an older build report a difference on replay (checkpoint hashes include
+  pointers); recordings are per build already (the file carries the build id).
+- Fill table now 7,820 ranges / 135,958 B (pointer values no longer coincide with the ROM's 0x80xxxxxx words).
 
 ## Option keys and the template strip (G11, 2026-11-05)
 
@@ -107,7 +147,7 @@ User request: once someone has loaded the website, the game must work with no ne
 - **Unchanged:** the ROM (`ge007-web` / `files` / `rom`), the converted sidecars and the saves stay in IndexedDB.
 - **Memory:** the cache lives in Cache Storage on disk and is streamed by the browser; nothing of it is in the wasm
   heap or the page's JS heap. The extra cost is a one-time second download of ~13 MiB (the precache runs next to the
-  page's own fetch on the very first visit) and ~13 MiB of disk. It adds no pressure to the ~2 GiB wasm memory risk on
+  page's own fetch on the very first visit) and ~13 MiB of disk. It adds no pressure to the wasm memory (2 GiB then, 384 MiB since G12) on
   phones (that risk is unchanged, still open: real phones).
 - **Tests** (muted headless Chrome, one at a time; probe.mjs got steps `net:offline|online` = Network.emulate-
   NetworkConditions + overrideNetworkState on the page and on every service worker, and `reload`):
@@ -191,7 +231,7 @@ GE_PORT=8775 GUEST_TOUCH=1 GUEST_EVALS="30:$(grep -v '^ *//' scripts/web/touchpr
 
 ### Next (touch)
 - A human on a real phone: iOS Safari (bottom toolbar, safe areas, no full screen: Add to Home Screen), Android
-  Chrome full screen, haptics, feel of the stick size / travel and the button places; whether the 2 GiB wasm memory
+  Chrome full screen, haptics, feel of the stick size / travel and the button places; whether the wasm memory (384 MiB since G12, was 2 GiB)
   is granted on the phone at all (desktop-only so far, open problem below) - the first thing to check.
 - Tapping menu items on the picture (SDL turns touches on the canvas into mouse events; untested).
 - Optional: R as a latch on touch (the game's own watch option Aim: toggle exists).
@@ -587,7 +627,7 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
 - Audio not listened to by ear (headless, muted); AudioWorklet resampler is linear.
 - Det mode (`GE_DETERM`) not tried on the web; sweeps are wall-clock with random AI/intros.
 - Solo warps into MP-only stages trap (not a game path, LEVELS.md); Citadel warp loops.
-- 2.06 GiB initial memory (desktop only).
+- 384 MiB fixed memory since G12 (was 2112 MiB): not yet tried on a real phone.
 - swiftshader: in route_dam.sh, after Bond walks forward (C-up since G5) and faces the Dam,
   retraces drop to ~25/s with ~9 browser frames/s (heavy view in software GL; before G5 the walk looked
   at the ground). With `PROBE_ANGLE=metal` the same route holds 50.0 retraces/s throughout

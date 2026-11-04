@@ -85,14 +85,19 @@ Costs/risks: pointer *comparisons* between a sign-extended and a zero-extended c
 still differ (D441 already fixed the known `(u32)`/`(s32)` truncation sites); the Emscripten JS glue in
 this mode indexes heap arrays with `>>`, so **memory JS touches must stay below 2 GiB** (see 2.2).
 
-### 2.2 Memory map (wasm linear memory, `INITIAL_MEMORY` 2112 MiB, no growth)
+### 2.2 Memory map (wasm linear memory, `INITIAL_MEMORY` 384 MiB since G12, no growth)
 
 | Range | What | How |
 |---|---|---|
-| `0 .. 0x10000000` | unused null zone | `-sGLOBAL_BASE=256mb` |
-| `0x10000000 .. 0x20000000` | **cart window**: ROM (12 MiB) + sidecars | `scripts/web/gen_cart_wasm.py` turns `romassets_e.s` into labels inside one 256 MiB `.rodata..ge_cart` section, linked **first**, so every label keeps its native value; zeros are packed out of the .wasm; `romdata.c` copies ROM + sidecars there and checks the address |
-| `0x20000000 ..` | static data, stack, C heap | like the Linux build's `-Ttext-segment=0x20000000`, so fast3d's address classes (`seg_addr`) work unchanged; game zero-init globals are forced into `.data` |
-| `0x80000000 .. +8 MiB` | **N64 DRAM, one view (V1 == K0)** | wasm cannot map pages twice; with `PORT_DRAM_V1_BASE = PORT_DRAM_K0_BASE = 0x80000000` both `off | 0x80000000` and fast3d's `w1 + K0` hit the bytes V1 pointers use. The s32 problem that made native use 0x70000000 disappears with the 32-bit wrap (D441 already ran all levels with the arena at 0x90000000). `dramReserve()` checks the heap break stays below |
+| `0 .. 0x10000000` | unused null zone | `-sGLOBAL_BASE=256mb`; fast3d reads values below 0x10000000 as segmented addresses or DRAM physical offsets, so nothing may live there |
+| `0x10000000 .. 0x12000000` | **cart window** (32 MiB): ROM (12 MiB) + sidecars (~5 MiB) | `scripts/web/gen_cart_wasm.py` turns `romassets_e.s` into labels inside one `.rodata..ge_cart` section, linked **first**, so every label keeps its native value; zeros are packed out of the .wasm; `romdata.c` copies ROM + sidecars there and checks the address and size |
+| `0x12000000 .. +8 MiB` | **N64 DRAM, one view (V1 == K0)** | `ge_dram_window`, the tail of the same section (`PORT_DRAM_V1_BASE = PORT_DRAM_K0_BASE = 0x12000000`). wasm cannot map pages twice; with one base, `phys | K0`, fast3d's `w1 + K0` and the game's V1 pointers hit the same bytes. 16 MiB aligned: `ptr & 0xFFFFFF` is the physical offset (as with 0x80000000 before); above 0x10000000: never taken for a segmented address. `dram.c` checks the address |
+| `0x12800000 ..` | static data (19.4 MiB, game zero-init globals forced into `.data`), 4 MiB stack, C heap from ~0x13FA0000 (~22 MiB used; the highest touched address was 0x155D6000 = 342 MiB in every level and MP sweep) | fast3d's raw-stream test uses `PORT_CART_END` (portaddr.h) instead of 0x20000000 |
+
+Until G12 the DRAM sat at 0x80000000 and the static data at 0x20000000 (2112 MiB of memory, desktop only). The move
+changed one live game site (`title.c` gun-barrel vertices: `| PORT_DRAM_K0_BASE`; the other four `| 0x80000000`
+sites in bg.c / propobj.c are N64-only `#else` branches), `webnet.c` / `net.js` (DRAM hash region), romfill.c (image
+and pointer ranges) and fast3d's texture upload buffer (grown on demand; it was max_tex_size^2 x 4 = 256 MiB).
 
 wasm objects have **no absolute symbols** (clang's wasm assembler crashes on `.set sym, CONST`, wasm-ld
 has no `--defsym`): hence the cart section, and `port/src/web/webdram.h` (force-included) turns the
@@ -100,9 +105,7 @@ three absolute DRAM symbols of `dram_syms.S` into dereferenced pointer variables
 `(*ge_web_cfb_16)`), which keeps the game's own declarations valid C; one use in a static initializer
 gets a build-dir constant macro instead (`scripts/web/web_srcfix.py --abs`).
 
-Risk: 2.06 GiB initial memory is fine on desktop Chrome (untouched pages cost nothing) but will not fit
-32-bit/mobile browsers. Later option: move the arena lower and route the five `| 0x80000000` game sites
-and fast3d's K0 mapping through one helper (needs a rule-2-style review), which would allow ~300 MiB.
+(G12: 384 MiB, see the table; phones untested.)
 
 ### 2.3 Threads: cooperative fibers, the browser drives the retrace
 Same as Conker. `port/src/web/webkernel.c`: each libultra thread is an `emscripten_fiber_t` (ASYNCIFY)
@@ -238,7 +241,7 @@ override; a stripped build needs the dev ROM at build time.
 3. **Cooperative scheduling vs real preemption**: the native port relies on preemptive threads in a few
    places (audio manager vs game thread, D147/D152 interrupt-mask lock); a busy-wait on a flag set by
    another thread hangs a fiber. The W1 stall is likely this class.
-4. **2 GiB memory** layout (2.2): desktop only; a lower arena needs the K0 helper.
+4. **Memory** (2.2): 384 MiB since G12 (was 2112 MiB); real phones untested.
 5. **ASYNCIFY overhead** (size/speed) with a software RSP: measure; JSPI later.
 6. **Fidelity** of adapter rows marked FIDELITY and of wasm float semantics vs x86-64 (should be equal;
    NaN payloads differ only in theory).

@@ -525,8 +525,9 @@ void initializeGunBarrelIntro(u8 *gfxBuffer, s32 bufferSize)
      * (SIGSEGV in gfx_sp_vertex reading the vertex array). Rebuild the exact
      * N64 K0 value from the physical offset; seg_addr() passes it through to
      * the KSEG0 mirror at 0x80000000 (segments 7/8 are never registered, so
-     * the unmarked-segment path is skipped). */
-    sub_GAME_7F01BFF8(gunbarrelgfxListPointer, (Vtx *)(OS_K0_TO_PHYSICAL((void *)barrelDisplayListPtr) | 0x80000000u), 0x1E);
+     * the unmarked-segment path is skipped). The K0 base comes from portaddr.h
+     * (0x80000000 native; the web build's single DRAM view, G11). */
+    sub_GAME_7F01BFF8(gunbarrelgfxListPointer, (Vtx *)(OS_K0_TO_PHYSICAL((void *)barrelDisplayListPtr) | (u32)PORT_DRAM_K0_BASE), 0x1E);
 #else
     sub_GAME_7F01BFF8(gunbarrelgfxListPointer, barrelDisplayListPtr + 0x80000000, 0x1E);
 #endif

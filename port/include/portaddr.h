@@ -19,5 +19,11 @@
 #ifndef PORT_DRAM_SIZE
 #define PORT_DRAM_SIZE     0x00800000UL  /* 8 MB, like an 8-MB-RAM N64 */
 #endif
+/* End of the cart window that starts at 0x10000000 (ROM + model / bg sidecars). Native: everything up to the
+ * 0x20000000 image base. Web: 32 MiB, followed by the DRAM arena and then the static data (CMakeLists.txt,
+ * docs/web/PLAN.md "Memory map"), so fast3d must not take [PORT_CART_END, 0x20000000) for cart bytes. */
+#ifndef PORT_CART_END
+#define PORT_CART_END      0x20000000UL
+#endif
 
 #endif /* PORT_PORTADDR_H */

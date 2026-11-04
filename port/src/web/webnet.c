@@ -45,6 +45,7 @@
 #include "webnet.h"
 #include "platform.h"
 #include "system.h"
+#include "portaddr.h"
 
 /* port/src/input.c, port/src/config.c (declared here: no game headers in this file) */
 void inputUpdate(void);
@@ -327,7 +328,7 @@ static void regionsFinal(void)
 {
     if (s_regsFinal) return;
     s_regsFinal = 1;
-    if (s_nreg < NET_MAX_REGIONS) { s_reg[s_nreg].addr = 0x80000000u; s_reg[s_nreg].len = 0x800000u; s_nreg++; }   /* N64 DRAM */
+    if (s_nreg < NET_MAX_REGIONS) { s_reg[s_nreg].addr = (uint32_t)PORT_DRAM_V1_BASE; s_reg[s_nreg].len = (uint32_t)PORT_DRAM_SIZE; s_nreg++; }   /* N64 DRAM (portaddr.h) */
     for (int i = 0; i < s_nreg; i++)
         for (uint32_t o = 0; o < s_reg[i].len && s_npages < NET_MAX_PAGES; o += NET_PAGE) {
             s_pageAddr[s_npages] = s_reg[i].addr + o;
@@ -387,9 +388,9 @@ void geNetRetraceDone(void)
     if (!geNetDetOn) return;
     if (desyncAt < 0) { const char *e = getenv("GE_NETDESYNC"); desyncAt = e ? atoi(e) : 0; }
     if (desyncAt > 0 && s_retrace == (unsigned)desyncAt) {   /* test: flip one byte of game memory (one peer only) */
-        volatile uint8_t *b = (volatile uint8_t *)(uintptr_t)(0x80000000u + 0x200000u);
+        volatile uint8_t *b = (volatile uint8_t *)(uintptr_t)(PORT_DRAM_V1_BASE + 0x200000u);
         *b ^= 1;
-        sysLogPrintf(LOG_NOTE, "[net] test: flipped one byte of N64 DRAM (0x80200000) at retrace %u", s_retrace);
+        sysLogPrintf(LOG_NOTE, "[net] test: flipped one byte of N64 DRAM (%#x) at retrace %u", (unsigned)(PORT_DRAM_V1_BASE + 0x200000u), s_retrace);
     }
     if (ge_rec_mode) rec_retrace_done();
     if (s_hashEvery <= 0 || s_retrace % (unsigned)s_hashEvery) return;

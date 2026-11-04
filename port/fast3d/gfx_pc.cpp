@@ -114,6 +114,20 @@ static std::map<ColorCombinerKey, struct ColorCombiner> color_combiner_pool;
 static std::map<ColorCombinerKey, struct ColorCombiner>::iterator prev_combiner = color_combiner_pool.end();
 
 static uint8_t* tex_upload_buffer = nullptr;
+/* G12: the upload buffer grows to what the imports need (at most 8 bytes of RGBA per loaded byte: 4-bit
+ * formats), instead of max_tex_size^2 * 4 up front: that was 256 MiB of heap on every GPU with an 8k texture
+ * limit, the web build's biggest allocation. New bytes are zero, as the fresh allocation's were. */
+static size_t tex_upload_capacity = 0;
+static void tex_upload_reserve(size_t need) {
+    if (need <= tex_upload_capacity) return;
+    size_t cap = tex_upload_capacity ? tex_upload_capacity : (1u << 20);
+    while (cap < need) cap *= 2;
+    uint8_t* nb = (uint8_t*)realloc(tex_upload_buffer, cap);
+    if (!nb) sysFatalError("F3D: out of memory for a %zu-byte texture upload", need);
+    memset(nb + tex_upload_capacity, 0, cap - tex_upload_capacity);
+    tex_upload_buffer = nb;
+    tex_upload_capacity = cap;
+}
 
 static struct RSP {
     float modelview_matrix_stack[11][4][4];
@@ -833,7 +847,7 @@ void gfx_texture_cache_delete_range(const uint8_t* start, const uint8_t* end) {
 // green/pink — the garbled Rareware-logo pixels.
 static bool gfx_tex_source_is_c_array(const uint8_t* addr) {
     const uintptr_t a = (uintptr_t)addr;
-    if (a >= 0x10000000u && a < 0x20000000u) return false; // cart map + sidecar
+    if (a >= 0x10000000u && a < PORT_CART_END) return false; // cart map + sidecar (portaddr.h)
     // V1 dram + KSEG0 mirror: the two mapped views (port/src/dram.c). D441:
     // was `a >= V1 && a < 0x90000000`, which went empty with the arena at
     // 0x90000000 and bswapped every DRAM texture (mirrored texel pairs).
@@ -1495,6 +1509,10 @@ static void import_texture(int i, int tile, bool importReplacement) {
         siz_eff = G_IM_SIZ_8b;
     }
 
+    /* G12: worst case 8 output bytes per loaded byte (4-bit -> RGBA32), plus one row of overshoot (the CI8 loop
+     * finishes its last line) */
+    tex_upload_reserve(((size_t)loaded_texture.size_bytes + loaded_texture.line_size_bytes +
+                        rdp.texture_tile[tile].line_size_bytes) * 8);
     if (fmt_eff == G_IM_FMT_RGBA) {
         if (siz_eff == G_IM_SIZ_16b) {
             import_texture_rgba16(tile, loaded_texture, rdp.tex_lod);
@@ -4465,11 +4483,7 @@ extern "C" void gfx_init(const GfxInitSettings *settings) {
         segmentPointers[i] = 0;
     }
 
-    if (tex_upload_buffer == nullptr) {
-        // We cap texture max to 8k, because why would you need more?
-        int max_tex_size = std::min(8192, gfx_rapi->get_max_texture_size());
-        tex_upload_buffer = (uint8_t*)malloc(max_tex_size * max_tex_size * 4);
-    }
+    tex_upload_reserve(1u << 20);   /* G12: grows on demand (tex_upload_reserve), was max_tex_size^2 * 4 */
 
     /* D72: N64 boots with RSP memory zeroed — no lookat until gSPLookAt. */
     rsp.lookat_enabled = false;
