@@ -524,6 +524,30 @@ else()
   list(FILTER SRC_PORT EXCLUDE REGEX "port/src/web/")
 endif()
 
+# retrowser.app v1 module (docs/web/RTW.md, scripts/rtw/build_rtw.sh): -DGE_RTW=ON in its own build tree.
+# The game runs in the host's Web Worker: the page-facing web files are replaced by port/rtw/ (pull audio,
+# native save, rtw_pause, a WebGL2 window on the host's OffscreenCanvas). Off (default): nothing changes.
+option(GE_RTW "web: build the retrowser.app v1 module (worker, MODULARIZE factory, rtw_* exports)" OFF)
+if(EMSCRIPTEN AND GE_RTW)
+  add_definitions(-DGE_RTW=1)
+  list(FILTER SRC_PORT EXCLUDE REGEX "port/src/web/(webaudio|webpage|websave)\\.c$")
+  list(FILTER SRC_FAST3D EXCLUDE REGEX "port/fast3d/gfx_sdl2\\.cpp$")
+  list(APPEND SRC_PORT "${CMAKE_SOURCE_DIR}/port/rtw/rtw.c")
+  list(APPEND SRC_FAST3D "${CMAKE_SOURCE_DIR}/port/rtw/gfx_rtw.cpp")
+  set(GE_ENV_LINK -sENVIRONMENT=worker -sMODULARIZE=1 -sEXPORT_NAME=createGoldenEye -sDYNAMIC_EXECUTION=0
+    "--js-library=${CMAKE_SOURCE_DIR}/port/rtw/rtw_lib.js"
+    -Wl,--wrap=SDL_GL_GetProcAddress -Wl,--wrap=SDL_GL_GetAttribute -Wl,--wrap=SDL_InitSubSystem
+    -Wl,--wrap=SDL_SetRelativeMouseMode -Wl,--wrap=SDL_GetRelativeMouseMode
+    -Wl,--wrap=SDL_GetRelativeMouseState -Wl,--wrap=SDL_GetMouseState -Wl,--wrap=SDL_GetKeyboardState
+    # port hooks (port/rtw/rtw.c) without touching the shared sources (the web build stays byte-identical)
+    -Wl,--wrap=inputRumbleSupported -Wl,--wrap=inputRumble
+    -Wl,--wrap=osContInit -Wl,--wrap=osContGetQuery -Wl,--wrap=osContGetReadData -Wl,--wrap=osContReset
+    -Wl,--wrap=configRegisterInt -Wl,--wrap=configRegisterUInt -Wl,--wrap=configRegisterFloat
+    -Wl,--wrap=configRegisterString -Wl,--wrap=configSetOptionMeta)
+else()
+  set(GE_ENV_LINK -sENVIRONMENT=web)
+endif()
+
 # Absolute symbols inside the reserved N64-DRAM region (port/src/dram.c):
 # cfb_16 (replaces src/cfb.c) and _bssSegmentEnd (mempool start marker).
 set(SRC_DRAM_SYMS "${CMAKE_SOURCE_DIR}/port/src/dram_syms.S")
@@ -805,8 +829,11 @@ if(EMSCRIPTEN)
     -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=65536
     -sEXIT_RUNTIME=0 -sINVOKE_RUN=0
     -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain,ccall,HEAPU8
-    -sFORCE_FILESYSTEM=1 -sENVIRONMENT=web
+    -sFORCE_FILESYSTEM=1 ${GE_ENV_LINK}
     -Wl,--wrap=emscripten_sleep -Wl,--wrap=alCSPGetState
     -Wl,-Map=${CMAKE_BINARY_DIR}/ge007.map)
+  if(GE_RTW)
+    set_target_properties(ge007 PROPERTIES LINK_DEPENDS "${CMAKE_SOURCE_DIR}/port/rtw/rtw_lib.js")
+  endif()
 endif()
 message(STATUS "Output binary: ${BIN_NAME}")
