@@ -3,7 +3,12 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 .. G9 + G11 + G12, 2026-11-05)
+## Current state (after G3 .. G13, 2026-11-05)
+
+G13: **retrowser build on `web`** (section "retrowser build on the default branch (G13)" below): `web-rtw` fast-forwarded
+into `web`; the built module is committed on `web` (root `retrowser.json`, files in `retrowser/`), so retrowser.app
+loads the plain link `Sorikairox/goldeneye-web-port` (default branch `web`). `scripts/rtw/publish_rtw.sh [--dist]`
+rebuilds and refreshes it (and `rtw-dist`). The site build is byte-identical (proof below).
 
 G12: **memory 2112 -> 384 MiB** (section "Memory map for phones (G12)" below): N64 DRAM moved from 0x80000000 to
 0x12000000 and the static data from 0x20000000 to 0x12800000; fast3d's 256 MiB texture upload buffer now grows on
@@ -11,11 +16,9 @@ demand. Same frames at the same det retraces as before, saves byte-identical, si
 
 G11: **option keys fixed on the site** (section "Option keys and the template strip (G11)" below): the template strip
 no longer zeroes short coincidental pieces of the string pool / port tables, so every option registers, the ini
-loads and saves all keys, and the key bindings have their real defaults. (G10, the retrowser build, is on branch
-`web-rtw`.)
+loads and saves all keys, and the key bindings have their real defaults.
 
-G10: **retrowser.app v1 build** (branch `web-rtw`, built files on local branch `rtw-dist`; nothing deployed or
-pushed): a separate build target `-DGE_RTW=ON` (`scripts/rtw/build_rtw.sh` -> `build/rtw/`), the game as a worker
+G10: **retrowser.app v1 build** (was branch `web-rtw`; on `web` since G13): a separate build target `-DGE_RTW=ON` (`scripts/rtw/build_rtw.sh` -> `build/rtw/`), the game as a worker
 module for the retrowser host. Details, decisions and what v1 lacks: `docs/web/RTW.md`; section "retrowser build
 (G10)" below.
 
@@ -127,6 +130,38 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
 - probe.mjs `PROBE_KEYS` now sends key codes for Escape, Enter, F10 and the arrows (SDL maps by keyCode).
 - Site build id (sw-build) `7d9d3bcb5d2a697d`; ge007.js unchanged (9eff2711…), ge007.wasm 3c302b2b…, ge007.romfill
   704abf7e….
+## retrowser build on the default branch (G13, 2026-11-05)
+
+- **Layout**: retrowser.app reads `retrowser.json` from the root of the default branch (`web` on GitHub); manifest
+  paths are relative to it, no `..`. So `web` carries `retrowser.json` (paths `retrowser/ge007.{wasm,js,romfill}`) and
+  `retrowser/` (the same bytes as `build/rtw`). `.gitattributes`: both `-text` (the repo has `* text=auto eol=lf`;
+  the manifest pins bytes). Branch `rtw-dist` (manifest + files at its root, link `owner/repo@rtw-dist`) is kept and
+  refreshed by the same script; RTW.md and earlier hand-offs name it.
+- **Refresh** after any change that reaches the rtw build: `scripts/rtw/publish_rtw.sh --dist` (build_rtw.sh, copy,
+  root manifest, `rtw hash` + `rtw check . --rom`, deploy_check of `retrowser/`, romfill layout check, rtw-dist commit
+  by plumbing), then commit `retrowser.json retrowser` on `web`. `--no-build` reuses `build/rtw`. Every build embeds
+  `git rev-parse --short HEAD` (CMake `VERSION_HASH`, printed at start-up), so the wasm hash changes with every
+  rebuild at a new commit even when nothing else changed; that is expected.
+- **Site byte-identical**: the deployed site was built with HEAD at 8137fa19 (its wasm carries that string; the G12
+  work was committed afterwards as 85c96932). Building the merged tree's content with HEAD pinned at 8137fa19
+  (`git checkout 8137fa19 && git checkout ee2c873a -- .`, clean `/build/web`) gives the deployed hashes exactly:
+  wasm 18e4d479…, js e45e2488…, romfill d90acc60…, and all 14 `build-web/site` files equal, sw-build id
+  d903878e5228234a; deploy_check OK (romscan 4 runs / 280 B, allowlisted zlib tables). A normal build at a later commit
+  differs only by that version string (and the romfill's offsets/CRCs that follow from it).
+- **rtw-dist's old wasm** (025eedf5) had `VERSION_HASH` "unknown": it was built in the `web-rtw` worktree, whose `.git`
+  file points outside the container mount, so git failed in CMake. A build from `~/goldeneye` at ee2c873a gives the
+  same ge007.js and a wasm 9 bytes longer (the "ee2c873a" string); rtw-dist is now c62ff000 = that build.
+- **romfill holds no ROM bytes**: format (tools_web/romfill.c) = 24-byte header (magic, version, count, two CRC32s,
+  nsyms) + nsyms x {addr, size} + count x {dst, len, rom_off, src_off, kind, order, pad}; publish_rtw.sh checks the file
+  length equals exactly that (2336 extents, 7819 entries, 175,092 B). romscan (raw, RZ-inflated, 16/32-bit swapped)
+  finds no run in it at 64 bytes (deploy_check) nor at 16 bytes; `rtw check --rom`: OK.
+- **Checks**: `rtw.mjs check . --rom ~/roms/GoldenEye_007_Europe.z64` OK, build id 13a06bb2…; e2e offline phase on a
+  `git archive HEAD retrowser.json retrowser` copy served by the GitHub mock as the default branch, built host
+  (`dist/`, serve-worker): online boot -> Start x3 -> mission select, servers stopped, offline reload with the
+  remembered ROM -> boot from caches, sidecars from IndexedDB, Start x3 -> mission select, AudioWorklet playing, no
+  request to the mock, no page errors (e2e_rtw.mjs now goes to the title in both halves).
+- **Pushed**: `web` and `rtw-dist` to `origin` (private). Nothing deployed; the Netlify site is unchanged.
+
 ## retrowser build (G10, 2026-11-05)
 
 - **What**: `GE_RTW` CMake option, own tree `/build/rtw`; `port/rtw/{rtw.c,gfx_rtw.cpp,rtw_lib.js}` replace the

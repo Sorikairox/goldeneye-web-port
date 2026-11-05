@@ -14,8 +14,19 @@ scripts/web/lockrun.sh /tmp/goldeneye-chrome.lock node scripts/rtw/e2e_rtw.mjs d
 scripts/web/lockrun.sh /tmp/goldeneye-chrome.lock node scripts/rtw/e2e_rtw.mjs offline build/rtw port_work/rtw/off
 ```
 
-The built files are committed on the local branch `rtw-dist` (manifest at the root; link form
-`owner/repo@rtw-dist`). Never with a ROM, sidecars, saves or pictures.
+## Published output (G13)
+
+The built files are committed on the default branch `web` itself, so the plain link `Sorikairox/goldeneye-web-port`
+works on retrowser.app: `retrowser.json` at the repo root (file paths `retrowser/ge007.*`) and the files in
+`retrowser/`. The orphan branch `rtw-dist` carries the same files with the manifest beside them (link form
+`owner/repo@rtw-dist`). Both are refreshed by
+
+```sh
+RTW_DIST_TRAILER='...' bash scripts/rtw/publish_rtw.sh --dist   # build_rtw.sh, copy, hash, check --rom, romscan, rtw-dist commit
+git add retrowser.json retrowser && git commit                   # one commit on web
+```
+
+Never with a ROM, sidecars, saves or pictures. `ge007.romfill` is offsets only (the script checks its exact layout).
 
 ## Manifest (`scripts/rtw/retrowser.template.json`, hashed by rtw-hash)
 
