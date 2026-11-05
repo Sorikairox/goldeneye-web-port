@@ -43,6 +43,7 @@ extern int rtw_build_id(void *ptr);
 extern int rtw_rumble(int port, int on);
 extern int rtw_export_file(const char *name, const char *mime, const void *ptr, int len);
 extern int rtw_pointer_lock(int on);
+extern int rtw_option_changed(int id, int value);                           /* [1.1] the game changed an option */
 extern int rtw_net_send(int peer, int channel, const void *ptr, int len);   /* [1.2] a packet to a session peer */
 extern int rtw_net_stat(int peer, int kind);                                /* [1.2] round trips in ms */
 /* JS helpers (rtw_lib.js; not host imports, so not named rtw_*) */
@@ -53,6 +54,9 @@ extern void gertw_net_recv(int peer, int channel, uint32_t ptr, int len);   /* r
 
 /* ---- port functions used here (declared locally: the port headers pull game headers) ------------------ */
 extern int configSetValue(const char *key, double v);
+extern int configGetValue(const char *key, double *out);
+extern void optionsOverlayToggle(void);
+extern int optionsOverlayIsOpen(void);
 extern void videoRequestLiveConfigForKey(const char *key);
 extern void portAllUnlockedApply(void);
 extern void audioSetPaused(int paused);
@@ -192,8 +196,12 @@ void webSaveWritten(int what)
 #define RTW_EXTRA_RELOAD  (1u << 16)   /* port action Reload (key R) */
 #define RTW_EXTRA_CROUCH  (1u << 17)   /* port action Crouch (key Left Ctrl) */
 #define RTW_EXTRA_SHOT    (1u << 18)   /* screenshot -> env.rtw_export_file (PNG) */
+#define RTW_EXTRA_OPTIONS (1u << 19)   /* the port's options overlay (F10 on the web site) */
 #define RTW_STICK_MAX 80               /* the port's / a real pad's stick range */
 static unsigned s_extra;
+static unsigned s_pad0;      /* host pad 0 as last sent (options overlay navigation) */
+static int s_pad0X, s_pad0Y;
+static int s_ovReq;
 static int s_shotReq;
 int geRtwTakeShotRequest(void) { int r = s_shotReq; s_shotReq = 0; return r; }   /* gfx_rtw.cpp, before the commit */
 static unsigned s_padB[4];
@@ -219,10 +227,24 @@ EMSCRIPTEN_KEEPALIVE int rtw_input(int port, int buttons, int sx, int sy)
             rtwLog("rtw: pad0 buttons %08x stick %d,%d", b, x, y);
         }
         last = b; lastX = x; lastY = y;
-        ge_web_touch(1, (int)(b & 0xffffu), x, y);
+        /* options overlay: the extra button opens / closes it; while it is open the pad drives it through the
+         * wrapped keyboard state (below) and N64 Start closes it. Buttons still held when it closes (the Start or
+         * B that closed it) are held back from the game until they are released. */
+        static unsigned s_padPrev, s_heldBack;
+        static int s_ovWasOpen;
+        const int ovOpen = s_started && optionsOverlayIsOpen();
+        const unsigned nrise = b & ~s_padPrev & 0xffffu;
+        s_padPrev = b;
+        s_pad0 = b; s_pad0X = x; s_pad0Y = y;
+        if (ovOpen && (nrise & 0x1000u)) s_ovReq = 1;
+        if (s_ovWasOpen && !ovOpen) s_heldBack = b & 0xffffu;
+        s_ovWasOpen = ovOpen;
+        s_heldBack &= b;
+        ge_web_touch(1, (int)(b & 0xffffu & ~s_heldBack), x, y);
         const unsigned rise = (b & ~s_extra);
         s_extra = b & 0xffff0000u;
         if ((rise & RTW_EXTRA_SHOT) && s_started) s_shotReq = 1;
+        if ((rise & RTW_EXTRA_OPTIONS) && s_started) s_ovReq = 1;
     } else {
         s_padB[port] = b & 0xffffu;
         s_padX[port] = x;
@@ -268,7 +290,7 @@ static Uint32 sdlButtons(void)
 }
 
 /* ---- rumble (input.c inputRumbleSupported / inputRumble) ------------------------------------------------ */
-static int s_rumbleOpt = 1;
+static int s_rumbleOpt = 1;   /* option 19 Vibration > 0 */
 static int s_rumbleOn[4];
 static int geRtwRumbleSupported(int port)
 {
@@ -418,26 +440,51 @@ EMSCRIPTEN_KEEPALIVE int rtw_pause(int on)
 void webPageInit(void) {}
 
 /* ---- options (§4.9): manifest ids -> the port's ini keys (docs/web/RTW.md) ------------------------------ */
-typedef struct { int id; const char *key; int kind; } RtwOpt;   /* kind 0: value as is, 1: bool inverted */
-enum { OPT_RES = 16, OPT_RUMBLE = 10, OPT_ONLINE = 17, OPT_NETDELAY = 18 };   /* 17, 18: online play (rtw_net.js) */
+/* Standard 1.2: the host's menu shows only start-up options (16 Resolution, 2 Skip intro, 17 Online play, 18 Online
+ * input delay). Every other one is "inGame": set in the game's own menu (the port's options overlay, opened with the
+ * extra button Options: rtw has no F10 key), hidden in the host, which keeps the value the game reports with
+ * env.rtw_option_changed and hands it back at the next start (and to every player of a lockstep session). The ini is
+ * not kept in this build (MEMFS only), so this is also how those settings survive a restart. geRtwPump polls the
+ * mapped config values once per frame and reports every change (not during a session: its values are fixed). */
+typedef struct { int id; const char *key; int kind; int lo, hi; } RtwOpt;   /* kind 0: value as is, 2: percent <-> factor */
+enum { OPT_RES = 16, OPT_ONLINE = 17, OPT_NETDELAY = 18, OPT_VIBRATION = 19 };   /* 17, 18: online play (rtw_net.js) */
 static const RtwOpt kOpts[] = {
-    { 1,  "Video.AspectMode", 0 },         /* 0 fill (Hor+ widescreen), 1 original 4:3, 2 16:9, 3 21:9 */
-    { 2,  "Game.SkipIntro", 0 },
-    { 3,  "Input.MouseSensitivity", 0 },
-    { 4,  "Input.MouseInvertY", 0 },
-    { 5,  "Video.FovScale", 0 },
-    { 6,  "Video.DrawDistance", 0 },
-    { 7,  "Video.TextureFilter", 0 },
-    { 8,  "Game.AllUnlocked", 0 },
-    { 9,  "Input.ControlScheme", 0 },
-    { 11, "Game.ScreenShakeIntensity", 2 },   /* percent -> factor */
-    { 12, "Game.NoHitFlash", 0 },
-    { 13, "Game.HudScale", 0 },
-    { 14, "Video.CrosshairHide", 0 },
-    { 15, "Video.DisplayFPS", 0 },
+    { 1,  "Video.AspectMode", 0, 0, 3 },         /* 0 fill (Hor+ widescreen), 1 original 4:3, 2 16:9, 3 21:9 */
+    { 2,  "Game.SkipIntro", 0, 0, 1 },
+    { 3,  "Input.MouseSensitivity", 0, 1, 500 },
+    { 4,  "Input.MouseInvertY", 0, 0, 1 },
+    { 5,  "Video.FovScale", 0, 50, 150 },
+    { 6,  "Video.DrawDistance", 0, 100, 800 },
+    { 7,  "Video.TextureFilter", 0, 0, 3 },
+    { 8,  "Game.AllUnlocked", 0, 0, 1 },
+    { 9,  "Input.ControlScheme", 0, 0, 1 },
+    { 11, "Game.ScreenShakeIntensity", 2, 0, 1000 },   /* percent -> factor */
+    { 12, "Game.NoHitFlash", 0, 0, 1 },
+    { 13, "Game.HudScale", 0, 75, 150 },
+    { 14, "Video.CrosshairHide", 0, 0, 1 },
+    { 15, "Video.DisplayFPS", 0, 0, 1 },
+    { OPT_VIBRATION, "Input.RumbleScale", 2, 0, 100 },   /* percent -> factor (was option 10, a bool, before 1.2) */
 };
 #define RTW_MAX_OPT 32
 static int s_optSet[RTW_MAX_OPT], s_optVal[RTW_MAX_OPT];
+static int s_optSeen[RTW_MAX_OPT];   /* the manifest value of each mapped key as last applied / reported */
+static int s_optPoll;                /* geRtwPump reports changes (set after the start) */
+
+/* the manifest value a mapped key has now (rounded, within the option's range); 0 = key not registered */
+static int optCurrent(const RtwOpt *o, int *out)
+{
+    double v;
+    if (!configGetValue(o->key, &v)) return 0;
+    if (o->kind == 2) v *= 100.0;
+    int iv = (int)(v < 0 ? v - 0.5 : v + 0.5);
+    *out = iv < o->lo ? o->lo : iv > o->hi ? o->hi : iv;
+    return 1;
+}
+static const RtwOpt *optFind(int id)
+{
+    for (size_t i = 0; i < sizeof(kOpts) / sizeof(kOpts[0]); i++) if (kOpts[i].id == id) return &kOpts[i];
+    return NULL;
+}
 
 /* Online play (standard 1.2): every peer boots with the room host's option values (the host dictates them), so a
  * session starts from the same configuration everywhere. On top, webnet.c's geNetApplySessionConfig pins what the
@@ -453,23 +500,39 @@ static void optApply(int id, int value)
     if (id == OPT_ONLINE || id == OPT_NETDELAY) return;   /* read by rtw_net.js at rtw_net_session (ge_rtw_option) */
     if (rtwSessionFixed(id)) return;
     if (id == OPT_RES) { s_resOpt = value < 0 ? 0 : value > 2 ? 2 : value; s_resizeDirty = 1; return; }
-    if (id == OPT_RUMBLE) {
-        s_rumbleOpt = value != 0;
-        configSetValue("Input.RumbleScale", s_rumbleOpt ? 0.5 : 0.0);
+    const RtwOpt *o = optFind(id);
+    if (!o) { sysLogPrintf(LOG_WARNING, "rtw: unknown option %d", id); return; }
+    double v = o->kind == 2 ? value / 100.0 : value;
+    if (!configSetValue(o->key, v)) { sysLogPrintf(LOG_WARNING, "rtw: option %d: %s not registered", id, o->key); return; }
+    if (id == OPT_VIBRATION) {
+        s_rumbleOpt = value > 0;
         if (!s_rumbleOpt) for (int p = 0; p < 4; p++) geRtwRumble(p, 0);
-        return;
     }
+    if (s_started) {
+        videoRequestLiveConfigForKey(o->key);
+        if (id == 8) portAllUnlockedApply();
+    }
+    int cur;
+    if (id >= 0 && id < RTW_MAX_OPT && optCurrent(o, &cur)) s_optSeen[id] = cur;   /* no echo to the host */
+}
+
+/* once per frame (gfx_rtw.cpp handle_events): the options overlay requests (extra button Options, Start / B to
+ * close) and the inGame options the player changed in it -> env.rtw_option_changed */
+void geRtwPump(void)
+{
+    if (!s_started) return;
+    if (s_ovReq) { s_ovReq = 0; optionsOverlayToggle(); }   /* refused during an online session (optionsoverlay.c) */
+    if (!s_optPoll || geNetSessionOn) return;
     for (size_t i = 0; i < sizeof(kOpts) / sizeof(kOpts[0]); i++) {
-        if (kOpts[i].id != id) continue;
-        double v = kOpts[i].kind == 2 ? value / 100.0 : kOpts[i].kind == 1 ? !value : value;
-        if (!configSetValue(kOpts[i].key, v)) sysLogPrintf(LOG_WARNING, "rtw: option %d: %s not registered", id, kOpts[i].key);
-        if (s_started) {
-            videoRequestLiveConfigForKey(kOpts[i].key);
-            if (id == 8) portAllUnlockedApply();
-        }
-        return;
+        const RtwOpt *o = &kOpts[i];
+        int cur;
+        if (!optCurrent(o, &cur) || cur == s_optSeen[o->id]) continue;
+        s_optSeen[o->id] = cur;
+        s_optVal[o->id] = cur; s_optSet[o->id] = 1;
+        if (o->id == OPT_VIBRATION) s_rumbleOpt = cur > 0;
+        rtw_option_changed(o->id, cur);
+        rtwLog("rtw: option %d = %d changed in the game (%s), told to the host", o->id, cur, o->key);
     }
-    sysLogPrintf(LOG_WARNING, "rtw: unknown option %d", id);
 }
 
 EMSCRIPTEN_KEEPALIVE int rtw_option(int id, int value)
@@ -527,11 +590,16 @@ EMSCRIPTEN_KEEPALIVE void ge_rtw_after_main(void)
     s_started = 1;
     /* the boot's video / input defaults ran (D546 migrations, low-end check): the host's options win */
     for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id]) optApply(id, s_optVal[id]);
-    for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id] && id != OPT_RES && id != OPT_RUMBLE && !rtwSessionFixed(id)) {
+    for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id] && id != OPT_RES && !rtwSessionFixed(id)) {
         for (size_t i = 0; i < sizeof(kOpts) / sizeof(kOpts[0]); i++)
             if (kOpts[i].id == id) videoRequestLiveConfigForKey(kOpts[i].key);
     }
     if (geNetSessionOn) geNetApplySessionConfig();   /* online: the session's fixed values stand after the boot's defaults */
+    for (size_t i = 0; i < sizeof(kOpts) / sizeof(kOpts[0]); i++) {   /* the values now are the reference for changes */
+        int cur;
+        if (optCurrent(&kOpts[i], &cur)) s_optSeen[kOpts[i].id] = cur;
+    }
+    s_optPoll = 1;
     /* Click-to-lock is the host's job (it captures on a click after rtw_pointer_lock(1)): arm the port's grab
      * so it asks for the pointer whenever a stage is running. */
     inputNotifyClick();
@@ -595,10 +663,40 @@ void geRtwShotWritten(const char *ppmPath)
 /* ---- SDL calls that would need SDL's Emscripten video / audio / joystick drivers (-Wl,--wrap) ----------- */
 /* GL entry points come from Emscripten's WebGL2 context (gfx_rtw.cpp made it current); the profile is
  * reported as ES like SDL's Emscripten context, so gfx_opengl.cpp takes the same paths as the web build. */
+/* glShaderSource goes through rtwShaderSource: fast3d's fragment shader for the N64 3-point texture filter calls
+ * mix(vec4, vec4, int), which GLSL ES 3.00 has no overload for, so choosing "N64 3-point" (option 7 = 2, now reachable
+ * in the options overlay) stopped the game with a shader compile error. The int becomes float(...) here; nothing
+ * else in the source changes. (The web site has the same latent bug in gfx_opengl.cpp; it stays as it is there, the
+ * site build must stay byte-identical.) */
+typedef void (*RtwShaderSourceFn)(unsigned shader, int count, const char *const *str, const int *len);
+static RtwShaderSourceFn s_realShaderSource;
+static void rtwShaderSource(unsigned shader, int count, const char *const *str, const int *len)
+{
+    static const char kNeedle[] = "texSize), three_point_filter);";
+    static const char kFixed[] = "texSize), float(three_point_filter));";
+    size_t total = 0;
+    for (int i = 0; i < count; i++) total += len && len[i] >= 0 ? (size_t)len[i] : strlen(str[i]);
+    char *src = (char *)malloc(total * 2 + 64), *o = src;
+    if (!src) { s_realShaderSource(shader, count, str, len); return; }
+    for (int i = 0; i < count; i++) {
+        const size_t n = len && len[i] >= 0 ? (size_t)len[i] : strlen(str[i]);
+        for (size_t k = 0; k < n;) {
+            if (n - k >= sizeof(kNeedle) - 1 && !memcmp(str[i] + k, kNeedle, sizeof(kNeedle) - 1)) {
+                memcpy(o, kFixed, sizeof(kFixed) - 1); o += sizeof(kFixed) - 1; k += sizeof(kNeedle) - 1;
+            } else *o++ = str[i][k++];
+        }
+    }
+    *o = 0;
+    const char *one = src;
+    s_realShaderSource(shader, 1, &one, NULL);
+    free(src);
+}
 void *__wrap_SDL_GL_GetProcAddress(const char *proc)
 {
     extern void *emscripten_webgl_get_proc_address(const char *name);
-    return emscripten_webgl_get_proc_address(proc);
+    void *p = emscripten_webgl_get_proc_address(proc);
+    if (p && !strcmp(proc, "glShaderSource")) { s_realShaderSource = (RtwShaderSourceFn)p; return (void *)rtwShaderSource; }
+    return p;
 }
 int __wrap_SDL_GL_GetAttribute(SDL_GLattr attr, int *value)
 {
@@ -661,6 +759,14 @@ const Uint8 *__wrap_SDL_GetKeyboardState(int *numkeys)
     if (s_started) {
         if (s_extra & RTW_EXTRA_RELOAD) keys[SDL_SCANCODE_R] = 1;
         if (s_extra & RTW_EXTRA_CROUCH) keys[SDL_SCANCODE_LCTRL] = 1;
+        if (optionsOverlayIsOpen()) {   /* the overlay reads its keys here (no SDL pads in this build): host pad 0 */
+            if ((s_pad0 & 0x0800u) || s_pad0Y > 40) keys[SDL_SCANCODE_UP] = 1;
+            if ((s_pad0 & 0x0400u) || s_pad0Y < -40) keys[SDL_SCANCODE_DOWN] = 1;
+            if ((s_pad0 & 0x0200u) || s_pad0X < -40) keys[SDL_SCANCODE_LEFT] = 1;
+            if ((s_pad0 & 0x0100u) || s_pad0X > 40) keys[SDL_SCANCODE_RIGHT] = 1;
+            if (s_pad0 & 0x8000u) keys[SDL_SCANCODE_RETURN] = 1;      /* A: accept / toggle */
+            if (s_pad0 & 0x4000u) keys[SDL_SCANCODE_BACKSPACE] = 1;   /* B: back (closes from the top page) */
+        }
     }
     if (numkeys) *numkeys = SDL_NUM_SCANCODES;
     return keys;

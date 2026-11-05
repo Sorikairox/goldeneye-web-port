@@ -18,6 +18,7 @@ extern "C" void geRtwBufferSize(int *w, int *h);    // rtw.c
 extern "C" int geRtwTakeResize(int *w, int *h);     // rtw.c
 extern "C" int geRtwTakeShotRequest(void);          // rtw.c (extra button Screenshot)
 extern "C" void geRtwShotWritten(const char *ppmPath);
+extern "C" void geRtwPump(void);                    // rtw.c: options overlay requests, inGame option changes
 extern "C" bool gfx_opengl_dump_bound_fbo(uint32_t width, uint32_t height, const char *path);   // gfx_opengl.cpp
 
 static int s_w = 640, s_h = 480;
@@ -59,6 +60,7 @@ static void rtw_get_dimensions(uint32_t *w, uint32_t *h, int32_t *x, int32_t *y)
 }
 static void rtw_get_centered_positions(int32_t w, int32_t h, int32_t *x, int32_t *y) { (void)w; (void)h; *x = 0; *y = 0; }
 static void rtw_handle_events(void) {
+    geRtwPump();
     int w, h;
     if (geRtwTakeResize(&w, &h) && (w != s_w || h != s_h)) {
         s_w = w; s_h = h;

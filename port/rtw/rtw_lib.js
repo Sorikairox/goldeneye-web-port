@@ -21,6 +21,9 @@ addToLibrary({
     (Module.rtw && Module.rtw.rtw_export_file ? Module.rtw.rtw_export_file(Number(name), Number(mime), Number(p), n) : -1),
   rtw_pointer_lock__sig: 'ii',
   rtw_pointer_lock: (on) => (Module.rtw && Module.rtw.rtw_pointer_lock ? Module.rtw.rtw_pointer_lock(on) : 0),
+  // [1.1] the game changed a manifest option itself (the options overlay): the host updates its stored value
+  rtw_option_changed__sig: 'iii',
+  rtw_option_changed: (id, v) => (Module.rtw && Module.rtw.rtw_option_changed ? Module.rtw.rtw_option_changed(id, v) : 0),
   // [1.2] online play (spec §4.12): a packet to a session peer (-2 = no session: a host without online play) and the
   // round trips (-1 = unknown). Called from rtw.c ge_rtw_net_send / ge_rtw_net_stat, so both are env imports of the wasm.
   rtw_net_send__sig: 'iiipi',
