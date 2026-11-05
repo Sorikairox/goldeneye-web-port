@@ -18,8 +18,8 @@
   "files": {
     "wasm": {
       "path": "ge007.wasm",
-      "sha256": "2acc111369379544f3c6ce3a43073693024b6df95ee48fd81221c2852a946579",
-      "size": 3222378
+      "sha256": "cdc0883e92867d8d6fd598982f6e9c0aa4ef6512378cb741aa1f33d8a3486f88",
+      "size": 3222369
     },
     "js": {
       "path": "ge007.js",
@@ -29,7 +29,7 @@
     "data": [
       {
         "path": "ge007.romfill",
-        "sha256": "6661d877ca84071885db8a853fc4f638c1a4db681124fdf5a7c711ff30a9a672",
+        "sha256": "0655491ba28d55d2bb859e0907cc6c82681f2068192276d5608674160b6bd547",
         "size": 175092
       }
     ]
