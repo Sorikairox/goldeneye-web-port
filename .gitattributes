@@ -6,3 +6,6 @@
 *.z64 binary
 *.exe binary
 *.bin binary
+# retrowser.app output (scripts/rtw/publish_rtw.sh): served byte-for-byte, pinned by SHA-256 in retrowser.json
+/retrowser.json -text
+/retrowser/** -text
