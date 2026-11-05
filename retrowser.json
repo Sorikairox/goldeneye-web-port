@@ -45,6 +45,11 @@
     "size": 230608,
     "credit": "Box art © Nintendo / Rare; James Bond © Danjaq / MGM · image from libretro-thumbnails"
   },
+  "icon": {
+    "path": "icon.png",
+    "sha256": "6708f69fac5b3121b9169158850f2cc9e919384cbcbe84bc0b564f1bf83c83ee",
+    "size": 3575
+  },
   "module": {
     "factory": "createGoldenEye",
     "loop": "mainloop"
