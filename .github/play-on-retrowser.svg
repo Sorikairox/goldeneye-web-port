@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 48" width="200" height="48" role="img" aria-label="Play on retrowser"><defs><linearGradient id="rtwg" x1="0" y1="22" x2="0" y2="54" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ffe08a"/><stop offset="1" stop-color="#ff9e57"/></linearGradient></defs>
+<rect x="1" y="1" width="198" height="46" rx="10" fill="#111317" stroke="#7cb7ff" stroke-width="2"/>
+<g transform="translate(8 6) scale(0.56)">
+<rect x="3" y="7" width="58" height="50" rx="8" fill="#1b1e24" stroke="#7cb7ff" stroke-width="3"/>
+<path d="M4.5 19.5h55" stroke="#7cb7ff" stroke-width="3"/>
+<rect x="10" y="11" width="4" height="4" fill="#ff8a80"/><rect x="17" y="11" width="4" height="4" fill="#ffcc66"/><rect x="24" y="11" width="4" height="4" fill="#7ee0a1"/>
+<g opacity=".18" fill="#7cb7ff"><rect x="6" y="23" width="52" height="1"/><rect x="6" y="26" width="52" height="1"/><rect x="6" y="29" width="52" height="1"/><rect x="6" y="32" width="52" height="1"/><rect x="6" y="35" width="52" height="1"/><rect x="6" y="38" width="52" height="1"/><rect x="6" y="41" width="52" height="1"/><rect x="6" y="44" width="52" height="1"/><rect x="6" y="47" width="52" height="1"/><rect x="6" y="50" width="52" height="1"/><rect x="6" y="53" width="52" height="1"/></g>
+<path d="M22.8 22.6 L25.6 22.6 L25.6 25.4 L28.4 25.4 L28.4 28.2 L34.0 28.2 L34.0 31.0 L36.8 31.0 L36.8 33.8 L42.4 33.8 L42.4 36.6 L45.2 36.6 L45.2 39.4 L42.4 39.4 L42.4 42.2 L36.8 42.2 L36.8 45.0 L34.0 45.0 L34.0 47.8 L28.4 47.8 L28.4 50.6 L25.6 50.6 L25.6 53.4 L22.8 53.4Z" fill="url(#rtwg)"/>
+</g>
+<text x="52" y="21" font-family="Verdana,DejaVu Sans,Segoe UI,sans-serif" font-size="11" letter-spacing="1" fill="#9aa0a6">PLAY ON</text>
+<text x="52" y="38" font-family="Verdana,DejaVu Sans,Segoe UI,sans-serif" font-size="18" font-weight="bold" fill="#e8eaed"><tspan fill="#ffb86b">retro</tspan>wser</text>
+</svg>

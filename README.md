@@ -1,3 +1,20 @@
+[![Play on retrowser](.github/play-on-retrowser.svg)](https://retrowser.app/g/Sorikairox/goldeneye-web-port)
+
+## ▶ Play GoldenEye 007 in your browser on retrowser
+
+1. Open **[retrowser.app/g/Sorikairox/goldeneye-web-port](https://retrowser.app/g/Sorikairox/goldeneye-web-port)**
+   (or paste this repository's link on [retrowser.app](https://retrowser.app)).
+2. Choose **your own ROM** of *GoldenEye 007* (Europe), as `.z64`, `.n64` or `.v64`
+   (SHA-1 of the `.z64`: `167c3c433dec1f1eb921736f7d53fac8cb45ee31`). It is checked on your device and never uploaded.
+3. Play with keyboard and mouse (click the picture to capture the mouse), a gamepad, or the touch controls on a phone.
+   Settings (aspect ratio, field of view, controls, …) are in the ☰ menu.
+
+Saves stay in your browser; use **Export save** in ☰ to keep a copy. After the first load the game also works offline.
+Online multiplayer is only on the port's own site for now. retrowser runs this repository's own build (`retrowser.json`
+and `retrowser/`); it hosts no game code and no ROMs.
+
+---
+
 # GoldenEye 007 PC Port
 
 [![CI](https://github.com/jkdansereau/goldeneye-pc-port/actions/workflows/ci.yml/badge.svg)](https://github.com/jkdansereau/goldeneye-pc-port/actions/workflows/ci.yml)
