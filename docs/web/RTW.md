@@ -34,14 +34,15 @@ Never with a ROM, sidecars, saves or pictures. `ge007.romfill` is offsets only (
 |---|---|---|
 | `id` | `goldeneye-eu` | saves are keyed by it; never change it |
 | `rom` | `.z64/.n64/.v64`, SHA-1 `167c3c43…` (EU), byteswap auto | the module also refuses any other ROM with a plain error |
-| `files` | `ge007.wasm` (template), `ge007.js` (glue), `data: ge007.romfill` | the fill table is offsets only (rtw-check `--rom`: 0 ROM blocks) |
+| `files` | `ge007.wasm` (template), `ge007.js` (glue), `data: ge007.romfill, ge007.netregions` | the fill table is offsets only (rtw-check `--rom`: 0 ROM blocks); netregions = the online state-hash ranges of this build's link map (`scripts/web/netregions.py`) |
 | `module` | factory `createGoldenEye`, loop `mainloop` | `main()` installs `emscripten_set_main_loop` (webkernel.c) and returns |
 | `video` | `webgl` | WebGL2 on the host's OffscreenCanvas |
 | `hz` | 50 | PAL; informative (the module paces itself) |
 | `memory` | 384 / 384 MiB, `memory64: true` | the `-sMEMORY64=2` (lowered) shape; module-defined memory; 2112 MiB before G12 |
 | `save` | `eeprom`, 512 bytes | the cart's real 4 Kbit EEPROM, native byte order (below) |
-| `controls.extra` | 16 Reload, 17 Crouch, 18 Screenshot | port actions without an N64 button; screenshot -> PNG via `rtw_export_file` |
-| `options` | 16 options (below) | the ini keys that make sense without the F10 overlay |
+| `controls.extra` | 16 Reload, 17 Crouch, 18 Screenshot, 19 Options | port actions without an N64 button; screenshot -> PNG via `rtw_export_file`; Options opens the port's options overlay (F10 on the site) |
+| `options` | 4 shown + 15 `inGame` (section "Options (standard 1.2)") | the host's menu shows only start-up options; the others are set in the overlay |
+| `net` | `{ "players": 4, "model": "lockstep" }` | online play (section "Online play (standard 1.2)") |
 
 ## Build (CMake `GE_RTW`)
 
@@ -95,15 +96,16 @@ Never with a ROM, sidecars, saves or pictures. `ge007.romfill` is offsets only (
   (frames queued minus wall time x 22050, stopped while paused), i.e. real-time playback as on the N64. `rtw_audio_rate`
   is the constant 22050 (the host asks right after `rtw_start`, before audio.c opens). The Blob-URL AudioWorklet is gone.
 - **Rumble**: every present pad has a Rumble Pak (option 10); motor on/off -> `rtw_rumble(port, on)`.
-- **Options** (§4.9): id -> ini key, `configSetValue` + `videoRequestLiveConfigForKey` live (All unlocked also runs
+- **Options** (§4.9; ids and shown / inGame: section "Options (standard 1.2)" below): id -> ini key, `configSetValue` + `videoRequestLiveConfigForKey` live (All unlocked also runs
   `portAllUnlockedApply`). Values sent before the start are applied after the fill and again after `main()` (the boot's
   D546 / low-end defaults would otherwise win). 1 Aspect (`Video.AspectMode`, default Original 4:3), 2 Skip intro,
   3 Mouse sensitivity, 4 Invert mouse Y, 5 FOV %, 6 Draw distance %, 7 Texture filter, 8 All levels unlocked,
-  9 Control style (`Input.ControlScheme`), 10 Rumble (`Input.RumbleScale` 0.5 / 0), 11 Screen shake %, 12 No hit
+  9 Control style (`Input.ControlScheme`), 19 Vibration % (`Input.RumbleScale`; was the bool 10 Rumble before G14), 11 Screen shake %, 12 No hit
   flash, 13 HUD scale, 14 Hide crosshair, 15 Show FPS, 16 Resolution (module-side). The ini itself is not kept
   (MEMFS only); not mapped: window/fullscreen/vsync/MSAA (host's), key bindings (host's), audio device/volume (host's).
 - **Imports** (`env.rtw_*`, rtw_lib.js -> `Module.rtw`): `rtw_log` (start / pad lines), `rtw_build_id` (logged at start),
-  `rtw_rumble`, `rtw_export_file` (screenshots), `rtw_pointer_lock`. Helper imports are named `gertw_*` (rtw-check
+  `rtw_rumble`, `rtw_export_file` (screenshots), `rtw_pointer_lock`, since G14 `rtw_option_changed` (1.1) and
+  `rtw_net_send` / `rtw_net_stat` (1.2). Helper imports are named `gertw_*` (rtw-check
   rejects unknown `env.rtw_*`), helper exports `ge_rtw_*`.
 
 ## Saves: the cart's native EEPROM
@@ -146,11 +148,65 @@ G12 the DRAM sat at 0x80000000, which forced 2112 MiB. Heap high-water in the we
 MiB) in every level and MP setup. Phones: still untested on a real device (iOS Safari's limit is ~1-1.5 GiB on most
 devices, so 384 MiB is now well inside it).
 
+## Online play (standard 1.2, G14)
+
+The host (retrowser 1.2, spec §4.12) owns the room, the WebRTC mesh and relay, the build / ROM check, the round trips
+measured before the start and the **lockstep boot**: every peer, room host included, restarts from power-on with the
+room host's option values and native save. The game side is the site's: `port/src/web/webnet.c` (unchanged, shared)
+keeps the input ring, frame barrier, input delay, det mode and state hashes; `port/rtw/rtw_net.js` (`--pre-js`, object
+`rtwNet`) is net.js's packet logic over the host's transport (as the Conker port's rtw_net.js).
+
+- **Calls**: `rtw_net_session(players, me)` (after `rtw_option`, before `rtw_start`): `rtwNet.begin` reads options 17
+  (Online play; off = every peer plays alone) and 18 (input delay, 0 = auto), D = clamp(ceil(`rtw_net_stat(0, 3)` / 40)
+  + 1, 2, 8) = net.js autoDelay with the session's worst p90 (the same number on every peer, no message). Right before
+  `main()` (after the template fill) `rtwNet.beforeMain` adds the hashed ranges (files.data `ge007.netregions` + the live
+  EEPROM image) and calls `_ge_net_session(mask, 1 << me, D, 10)`; the transport (5 ms pump, 250 ms time sync) starts
+  after `main()`. `rtw_net_peer(i, 0)` starts the lost-player agreement. `rtw_net_buffer` / `rtw_net_recv`: a static
+  64 KiB buffer, copied out at once; a packet that brings the awaited input kicks the det loop (`_ge_net_kick`) in a
+  **microtask**, never inside `rtw_net_recv` (Asyncify). Sends: `_ge_rtw_net_send(peer, ch, len)` from a static
+  64 KiB buffer -> `env.rtw_net_send`; webnet.c's send point (EM_ASM `Module.netAfterTick`) reaches `rtwNet`.
+- **Packets**: channel 0 = net.js's input packet without type / sender bytes (ack, first frame, unacked inputs up to 64,
+  newest hash, last retrace, time-sync margin), sent at each local sample, repeated after 8 ms, keep-alive 30 ms;
+  channel 1 = binary lost / held / drop / desync / pages (per-page hashes raw; the report names the first differing page
+  with its game symbols from the netregions S lines, or the N64 DRAM address).
+- **Gone versus net.js**: rooms, codes, RTCPeerConnection, pings, the `config` message, `_ge_net_eeprom_buf` (the host
+  hands over the room host's native save: `rtw_save_load` -> `ge_web_eeprom_load`), `GENet.hold`, the hidden-tab ticker.
+- **Session rules in rtw.c**: options 8 / 9 are not applied (webnet.c `geNetApplySessionConfig` pins all-unlocked off and
+  OG controls, and runs again after the start-up option pass); `rtw_option` after the start is ignored except for the
+  picture-only ids 1 / 7 / 15 / 16 (the 1.2 host locks options in a session anyway); the host's pads 1-3 never override
+  controllers or presence (the session's input ring does); no option changes are reported; the overlay is refused.
+- **Tests**: `scripts/rtw/rtw_net_e2e.mjs <build dir> <out> [rom]` (env PLAYERS 2-4, FRAMES, DROP, DESYNC, LEAVE, SOLO,
+  RTW_HOST_DIST): pages in one muted headless Chrome against the host's built dist with its in-process room server.
+
+## Options (standard 1.2: start-up options only in the host's menu)
+
+retrowser 1.2 (commit 39060f5) shows only settings needed before the game starts; an option with `"inGame": true` is
+hidden there, set in the game's own menu, reported with `env.rtw_option_changed`, kept by the host and handed back at
+the next start (and to every player of a lockstep session). This build keeps no ini (MEMFS), so `inGame` is also what
+keeps those settings across starts.
+
+- **Shown**: 16 Resolution (module-side buffer size; no overlay row), 2 Skip intro (read once, on the first main menu,
+  lv.c), 17 Online play, 18 Online input delay (0 = auto).
+- **inGame**: 1 Aspect ratio, 3 Mouse sensitivity (1..500), 4 Invert mouse Y, 5 Field of view (game-side FOV, frustum
+  culling), 6 Draw distance (game-side far clip), 7 Texture filter, 8 All levels unlocked, 9 Control style, 11 Screen shake
+  (fr.c, 0..1000 % = ini 0..10), 12 No hit flash, 13 HUD scale, 14 Hide crosshair, 15 Show FPS, 19 Vibration %
+  (Input.RumbleScale).
+- **Dropped**: 10 Rumble (a bool), replaced by 19.
+- **The game's menu**: the port's options overlay (F10 on the site) opens with extra button 19 Options (host key 4 by
+  default). While it is open host pad 0 drives it through the wrapped `SDL_GetKeyboardState` (stick / D-pad = arrows, A =
+  Enter, B = Backspace: back / close from the top page, Start closes); buttons still held when it closes are held back
+  from the game until released. `geRtwPump` (once per frame, gfx_rtw.cpp `handle_events`) polls every mapped key and calls
+  `rtw_option_changed` on a change (rounded, clamped to the manifest range; host values are not echoed).
+- **Fixed on the way**: "N64 3-point" texture filter (option 7 = 2) stopped the game: fast3d's fragment shader calls
+  `mix(vec4, vec4, int)`, which GLSL ES 3.00 lacks. rtw only: the wrapped `SDL_GL_GetProcAddress` hands out a
+  `glShaderSource` that rewrites it to `float(...)`. **The site has the same latent bug** (gfx_opengl.cpp), not fixed there
+  (byte-identical rule).
+- **Test**: `scripts/rtw/rtw_options_e2e.mjs <build dir> <out> [rom]`.
+
 ## What does not fit v1 (host would need)
 
-- Netplay (`net.js`, WebRTC lockstep, 2-4 players) waits for the v1 draft `rtw_net_*` (W11); `net.players` is not set.
 - Mouse in menus: the sandbox only has relative motion while captured; the port's front-end mouse pointer is unused.
-- Settings files: the port's ini (bindings, PC options beyond the 16 mapped) is not persisted; the host would need an
+- Settings files: the port's ini (bindings, PC options beyond the mapped ones) is not persisted (the mapped ones are kept by the host since G14: `inGame` options); the host would need an
   options blob or a second save kind ("config") to keep it.
 - Recordings (`.gerec`, G6 recorder) would go through `rtw_export_file`, but replay needs an import path into the
   module (the host has none for non-save files).

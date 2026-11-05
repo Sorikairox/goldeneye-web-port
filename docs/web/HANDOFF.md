@@ -3,7 +3,12 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 .. G13, 2026-11-05)
+## Current state (after G3 .. G14, 2026-11-05)
+
+G14: **retrowser build plays online and follows the 1.2 options rule** (section "retrowser online play and start-up
+options (G14)" below): standard 1.2 lockstep for 2-4 players through the host (rtw build only), and the host's menu
+keeps only start-up options; the rest are `inGame` options set in the port's options overlay (extra button Options).
+The site build is byte-identical (proof below). Nothing deployed.
 
 G13: **retrowser build on `web`** (section "retrowser build on the default branch (G13)" below): `web-rtw` fast-forwarded
 into `web`; the built module is committed on `web` (root `retrowser.json`, files in `retrowser/`), so retrowser.app
@@ -64,6 +69,45 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## retrowser online play and start-up options (G14, 2026-11-05)
+
+Details: `docs/web/RTW.md` sections "Online play (standard 1.2, G14)" and "Options (standard 1.2 ...)".
+- **f4461d77 online play** (rtw target only): manifest `"net": { "players": 4, "model": "lockstep" }`, options 17 Online
+  play (on) and 18 Online input delay (0 = auto), files.data `ge007.netregions` (build_rtw.sh runs netregions.py on the rtw
+  map; publish_rtw.sh copies it). rtw.c exports `rtw_net_session/peer/buffer/recv`, imports `rtw_net_send/stat` (via
+  `ge_rtw_net_send` / `_stat`, static 64 KiB buffers). webnet.c unchanged (ring, barrier, D, det, hashes). New
+  `port/rtw/rtw_net.js` (`--pre-js`): net.js's packet logic on the host's transport (Conker's rtw_net.js adapted). D =
+  clamp(ceil(rtw_net_stat(0,3)/40)+1, 2, 8). Session started right before main() (after the fill); kick in a microtask.
+  Session rules: options 8/9 pinned by geNetApplySessionConfig (re-run after the option pass), later rtw_option ignored
+  (except picture-only 1/7/15/16), host pads 1-3 never override the ring. `_ge_net_eeprom_buf` / `GENet.hold` unused
+  (the host hands over the room host's native save and boots the session).
+- **71875c00 options** (retrowser 39060f5, user request via the coordinator): shown 16 Resolution, 2 Skip intro, 17
+  Online play, 18 Online input delay; inGame 1, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 19 Vibration %; dropped 10
+  Rumble (bool, replaced by 19). Overlay opened by extra button 19 Options, driven by host pad 0 through the wrapped
+  keyboard state; `geRtwPump` reports every change with `rtw_option_changed`. Found + fixed (rtw only): "N64 3-point"
+  texture filter aborted the game (GLSL ES `mix(vec4, vec4, int)`); a wrapped `glShaderSource` casts to float. **The
+  site has that latent bug too** (choose N64 3-point in F10 -> fatal shader error); fix it when the site may change.
+- 3dbf47cd root build (publish_rtw.sh --dist; rtw-dist 8848c8ff), `rtw.mjs check . --rom ~/roms/...` OK (build id
+  7c06fc68).
+- **Tests** (muted headless Chrome through the shared chrome lock; retrowser dist d7782274 copied to the scratchpad;
+  `scripts/rtw/rtw_net_e2e.mjs`, ~1 min each):
+
+  | Players | Hash points equal (retraces) | Drop | Other |
+  |---|---|---|---|
+  | 2 | 64/64 (40..670); 64/64 (1950..2580) in a 2500-retrace run | - | P1 leaves -> alone; solo 49.9 retraces/s, no session; repo-layout copy 64/64 |
+  | 3 | 64/64 (50..680) | P3 closed: neutral from 686 on both, 64/64 after (440..1070) | desync report: page 721 N64 DRAM 80200000 on both |
+  | 4 | 64/64 (40..670) | P4 closed: neutral from 682 on all 3, 63/63 after (450..1070) | desync report as above; solo OK |
+
+  Every run: same D everywhere (2, loopback p90 1-3 ms), session set at retrace 0, room host's options on every peer,
+  0 bad / refused packets, 0 glue errors. `rtw_options_e2e.mjs`: host menu shows only the 4, overlay by key 4, changes
+  of options 1/6/7/9 reported + stored by the host, back in the game after a reload, ALL PASS. e2e_rtw dev 12/12 PASS,
+  offline (repo-layout copy) PASS.
+- **Site byte-identical**: HEAD pinned at 8137fa19 + `git checkout web -- .`, `scripts/web/build.sh`: wasm 18e4d479,
+  js e45e2488, romfill d90acc60, netregions, sw.js and all page files equal the live site's (downloaded; live
+  index.html differs only by the two snippets Netlify injects), sw-build id d903878e5228234a; deploy_check / romscan OK.
+- **Host gaps**: none blocking (see the session report). The drop still waits for the host's 15 s "gone" when a page
+  closes without a goodbye (Conker's gap 1).
 
 ## Memory map for phones (G12, 2026-11-05)
 
