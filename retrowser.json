@@ -18,19 +18,24 @@
   "files": {
     "wasm": {
       "path": "retrowser/ge007.wasm",
-      "sha256": "cdc0883e92867d8d6fd598982f6e9c0aa4ef6512378cb741aa1f33d8a3486f88",
-      "size": 3222369
+      "sha256": "4b62fa668f84cbc3dfbf6861340756ad570b1874bfa7d8a4a6d5f18b374502e2",
+      "size": 3227225
     },
     "js": {
       "path": "retrowser/ge007.js",
-      "sha256": "ddcaa6259028519ffa5a7678c3a43a7c464e7e077a4ed0147d4deeed8975bf4c",
-      "size": 454866
+      "sha256": "7a5e65f84ad6b391115d099ca5742a4b98c78b4a88262202edab9aaaceac27f5",
+      "size": 485133
     },
     "data": [
       {
         "path": "retrowser/ge007.romfill",
-        "sha256": "0655491ba28d55d2bb859e0907cc6c82681f2068192276d5608674160b6bd547",
-        "size": 175092
+        "sha256": "2833b828152fa54ac74a00dcc979d36f919303d68043eb814e4bb85ac337b41c",
+        "size": 174992
+      },
+      {
+        "path": "retrowser/ge007.netregions",
+        "sha256": "9c1228f9629b1af9f95fa447859240cc1864903d867af59059562b95746fd776",
+        "size": 74072
       }
     ]
   },
@@ -62,34 +67,14 @@
       {
         "bit": 18,
         "label": "Screenshot"
+      },
+      {
+        "bit": 19,
+        "label": "Options"
       }
     ]
   },
   "options": [
-    {
-      "id": 1,
-      "label": "Aspect ratio",
-      "type": "enum",
-      "default": 1,
-      "choices": [
-        {
-          "value": 0,
-          "label": "Fill (widescreen)"
-        },
-        {
-          "value": 1,
-          "label": "Original 4:3"
-        },
-        {
-          "value": 2,
-          "label": "16:9"
-        },
-        {
-          "value": 3,
-          "label": "21:9"
-        }
-      ]
-    },
     {
       "id": 16,
       "label": "Resolution",
@@ -117,10 +102,50 @@
       "default": 0
     },
     {
+      "id": 17,
+      "label": "Online play",
+      "type": "bool",
+      "default": 1
+    },
+    {
+      "id": 18,
+      "label": "Online input delay (0 = auto)",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 16
+    },
+    {
+      "id": 1,
+      "label": "Aspect ratio",
+      "type": "enum",
+      "default": 1,
+      "inGame": true,
+      "choices": [
+        {
+          "value": 0,
+          "label": "Fill (widescreen)"
+        },
+        {
+          "value": 1,
+          "label": "Original 4:3"
+        },
+        {
+          "value": 2,
+          "label": "16:9"
+        },
+        {
+          "value": 3,
+          "label": "21:9"
+        }
+      ]
+    },
+    {
       "id": 9,
       "label": "Control style",
       "type": "enum",
       "default": 0,
+      "inGame": true,
       "choices": [
         {
           "value": 0,
@@ -137,20 +162,25 @@
       "label": "Mouse sensitivity %",
       "type": "int",
       "default": 100,
-      "min": 10,
-      "max": 500
+      "min": 1,
+      "max": 500,
+      "inGame": true
     },
     {
       "id": 4,
       "label": "Invert mouse Y",
       "type": "bool",
-      "default": 0
+      "default": 0,
+      "inGame": true
     },
     {
-      "id": 10,
-      "label": "Rumble",
-      "type": "bool",
-      "default": 1
+      "id": 19,
+      "label": "Vibration %",
+      "type": "int",
+      "default": 50,
+      "min": 0,
+      "max": 100,
+      "inGame": true
     },
     {
       "id": 5,
@@ -158,7 +188,8 @@
       "type": "int",
       "default": 100,
       "min": 50,
-      "max": 150
+      "max": 150,
+      "inGame": true
     },
     {
       "id": 6,
@@ -166,13 +197,15 @@
       "type": "int",
       "default": 200,
       "min": 100,
-      "max": 800
+      "max": 800,
+      "inGame": true
     },
     {
       "id": 7,
       "label": "Texture filter",
       "type": "enum",
       "default": 1,
+      "inGame": true,
       "choices": [
         {
           "value": 0,
@@ -198,7 +231,8 @@
       "type": "int",
       "default": 100,
       "min": 75,
-      "max": 150
+      "max": 150,
+      "inGame": true
     },
     {
       "id": 11,
@@ -206,33 +240,42 @@
       "type": "int",
       "default": 100,
       "min": 0,
-      "max": 200
+      "max": 1000,
+      "inGame": true
     },
     {
       "id": 12,
       "label": "No hit flash",
       "type": "bool",
-      "default": 0
+      "default": 0,
+      "inGame": true
     },
     {
       "id": 14,
       "label": "Hide crosshair",
       "type": "bool",
-      "default": 0
+      "default": 0,
+      "inGame": true
     },
     {
       "id": 15,
       "label": "Show FPS",
       "type": "bool",
-      "default": 0
+      "default": 0,
+      "inGame": true
     },
     {
       "id": 8,
       "label": "All levels unlocked",
       "type": "bool",
-      "default": 0
+      "default": 0,
+      "inGame": true
     }
   ],
+  "net": {
+    "players": 4,
+    "model": "lockstep"
+  },
   "license": "MIT (build code); the game data comes from your ROM",
   "source": "https://github.com/Sorikairox/goldeneye-web-port"
 }
