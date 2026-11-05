@@ -76,7 +76,8 @@ var ENVIRONMENT_IS_SHELL = false;
 // game's .data/.bss, S lines = symbol names for the desync report) + the live EEPROM image; webnet.c adds the DRAM.
 var rtwNet = (function () {
   'use strict';
-  const RING = 256, HASH_EVERY = 10, MAX_IN = 64;
+  const RING = 256, HASH_EVERY = 10, MAX_IN = 64;   // HASH_EVERY = rtw.c RTW_HASH_EVERY
+  const HASH_MASK = ['g_GfxMemPos', 'g_gfxTaskSettings'];   // display-list records (rtw.c __wrap_geNetRetraceDone)
   const CH_IN = 0, CH_CTL = 1;
   const PEER_GONE = 0, PEER_CONNECTED = 1, PEER_SILENT = 2;
   const T_LOST = 1, T_HELD = 2, T_DROP = 3, T_DESYNC = 4, T_PAGES = 5;
@@ -188,6 +189,10 @@ var rtwNet = (function () {
       }
     }
     if (!S.regions) say('[net] ge007.netregions has no ranges: only the N64 DRAM is hashed');
+    // left out of the hash with the display lists (rtw.c __wrap_geNetRetraceDone): records that describe them
+    const masked = [];
+    for (const [a, n, name] of S.syms || []) if (HASH_MASK.includes(name) && wasm('ge_rtw_hash_mask_add')(a, n) > 0) masked.push(name);
+    say(`[net] left out of the hash with the display lists: ${masked.join(' ') || 'none'}`);
     if (wasm('ge_web_eeprom_image')) wasm('ge_net_region_add')(wasm('ge_web_eeprom_image')() >>> 0, 2048);   // the live EEPROM image (libultra.c)
     wasm('ge_net_session')((1 << S.players) - 1, 1 << S.me, S.delay, HASH_EVERY);
     S.sessionSet = true;
@@ -477,7 +482,10 @@ var rtwNet = (function () {
   // the ring's entries of channel ch for frames a..b (tests: the remote inputs that arrived)
   function ring(ch, a, b) { const list = []; for (let f = a; f <= b; f++) list.push(get(f, ch)); return list; }
   globalThis.__rtwGoldenEye = { Module, net: status, ring, frame: () => wasm('ge_net_frame')() >>> 0,
-    option: (id) => wasm('ge_rtw_option')(id, -1) };
+    option: (id) => wasm('ge_rtw_option')(id, -1), optionNow: (id) => wasm('ge_rtw_option_now')(id),
+    settings: () => ({ ...(typeof gertwSettings === 'object' && gertwSettings.rec || {}) }),
+    // test aid: set one of this player's own settings as the overlay would (record + live)
+    setOwn: (id, v) => { if (typeof gertwSettings === 'object') gertwSettings.put(id, v); wasm('ge_rtw_own_option')(id, v); } };
   return { begin, beforeMain, peerState, startTransport, recv, status, ring, get active() { return S.active; } };
 })();
 // end include: /src/port/rtw/rtw_net.js
@@ -11277,6 +11285,45 @@ async function createWasm() {
   ;
   }
 
+  
+  var gertwSettings = {
+  KEY:"settings-v1",
+  rec:null,
+  open() {
+        return new Promise((ok, bad) => {
+          const r = indexedDB.open('ge007-rtw', 1);
+          r.onupgradeneeded = () => r.result.createObjectStore('files');
+          r.onsuccess = () => ok(r.result);
+          r.onerror = () => bad(r.error);
+        });
+      },
+  async load() {
+        let v;
+        try {
+          if (typeof indexedDB !== 'undefined') {
+            const d = await gertwSettings.open();
+            v = await new Promise((ok) => {
+              const q = d.transaction('files').objectStore('files').get(gertwSettings.KEY);
+              q.onsuccess = () => { ok(q.result); d.close(); };
+              q.onerror = () => { ok(undefined); d.close(); };
+            });
+          }
+        } catch (e) { out('[rtw] settings record not read: ' + e); }
+        gertwSettings.rec = v && typeof v === 'object' ? { ...v } : {};
+        return gertwSettings.rec;
+      },
+  put(id, value) {
+        const rec = gertwSettings.rec || (gertwSettings.rec = {});
+        rec[id] = value;
+        if (typeof indexedDB === 'undefined') return;
+        const copy = { ...rec };
+        gertwSettings.open().then((d) => {
+          const tr = d.transaction('files', 'readwrite');
+          tr.objectStore('files').put(copy, gertwSettings.KEY);
+          tr.oncomplete = tr.onerror = tr.onabort = () => d.close();
+        }).catch((e) => out('[rtw] settings record not stored: ' + e));
+      },
+  };
   var gertwBootAsync = async (romp, romlen) => {
       const M = Module;
       const EU_SHA1 = '167c3c433dec1f1eb921736f7d53fac8cb45ee31';
@@ -11363,6 +11410,12 @@ async function createWasm() {
       }
       M._ge_rtw_rom_free();
   
+      // this player's own settings (not in the manifest): applied at every start, sessions included
+      const own = await gertwSettings.load();
+      const ownIds = Object.keys(own).filter((k) => Number.isInteger(own[k]));
+      for (const k of ownIds) M._ge_rtw_own_option(Number(k), own[k]);
+      log(`settings record: ${ownIds.length ? ownIds.map((k) => `${k}=${own[k]}`).join(' ') : 'empty (defaults)'}`);
+  
       rtwNet.beforeMain();   // online play: webnet.c's session (ring, input delay, hashed ranges) before the first retrace
       M._ge_rtw_before_main();
       FS.chdir('/');
@@ -11407,6 +11460,8 @@ async function createWasm() {
   var _gertw_net_recv = (peer, ch, p, n) => rtwNet.recv(peer, ch, p >>> 0, n);
 
   var _gertw_net_session = (players, me) => rtwNet.begin(players, me);
+
+  var _gertw_settings_put = (id, value) => gertwSettings.put(id, value);
 
 
   function _rtw_build_id(p) {
@@ -11636,25 +11691,25 @@ if (Module['wasmBinary']) wasmBinary = Module['wasmBinary'];
 // end include: postlibrary.js
 
 var ASM_CONSTS = {
-  331295360: ($0, $1) => { if (Module['recInput']) Module['recInput']($0, $1 >>> 0); },  
- 331295422: () => { if (Module['netAfterTick']) Module['netAfterTick'](); },  
- 331295480: ($0, $1, $2, $3) => { if (Module['recCheck']) Module['recCheck']($0, $1 >>> 0, $2 >>> 0, $3); },  
- 331295556: ($0) => { if (Module['recEnd']) Module['recEnd']($0); },  
- 331295604: () => { if (typeof(AudioContext) !== 'undefined') { return true; } else if (typeof(webkitAudioContext) !== 'undefined') { return true; } return false; },  
- 331295751: () => { if ((typeof(navigator.mediaDevices) !== 'undefined') && (typeof(navigator.mediaDevices.getUserMedia) !== 'undefined')) { return true; } else if (typeof(navigator.webkitGetUserMedia) !== 'undefined') { return true; } return false; },  
- 331295985: ($0) => { if(typeof(Module['SDL2']) === 'undefined') { Module['SDL2'] = {}; } var SDL2 = Module['SDL2']; if (!$0) { SDL2.audio = {}; } else { SDL2.capture = {}; } if (!SDL2.audioContext) { if (typeof(AudioContext) !== 'undefined') { SDL2.audioContext = new AudioContext(); } else if (typeof(webkitAudioContext) !== 'undefined') { SDL2.audioContext = new webkitAudioContext(); } if (SDL2.audioContext) { if ((typeof navigator.userActivation) === 'undefined') { autoResumeAudioContext(SDL2.audioContext); } } } return SDL2.audioContext === undefined ? -1 : 0; },  
- 331296537: () => { var SDL2 = Module['SDL2']; return SDL2.audioContext.sampleRate; },  
- 331296605: ($0, $1, $2, $3) => { var SDL2 = Module['SDL2']; var have_microphone = function(stream) { if (SDL2.capture.silenceTimer !== undefined) { clearInterval(SDL2.capture.silenceTimer); SDL2.capture.silenceTimer = undefined; SDL2.capture.silenceBuffer = undefined } SDL2.capture.mediaStreamNode = SDL2.audioContext.createMediaStreamSource(stream); SDL2.capture.scriptProcessorNode = SDL2.audioContext.createScriptProcessor($1, $0, 1); SDL2.capture.scriptProcessorNode.onaudioprocess = function(audioProcessingEvent) { if ((SDL2 === undefined) || (SDL2.capture === undefined)) { return; } audioProcessingEvent.outputBuffer.getChannelData(0).fill(0.0); SDL2.capture.currentCaptureBuffer = audioProcessingEvent.inputBuffer; dynCall('vp', $2, [$3]); }; SDL2.capture.mediaStreamNode.connect(SDL2.capture.scriptProcessorNode); SDL2.capture.scriptProcessorNode.connect(SDL2.audioContext.destination); SDL2.capture.stream = stream; }; var no_microphone = function(error) { }; SDL2.capture.silenceBuffer = SDL2.audioContext.createBuffer($0, $1, SDL2.audioContext.sampleRate); SDL2.capture.silenceBuffer.getChannelData(0).fill(0.0); var silence_callback = function() { SDL2.capture.currentCaptureBuffer = SDL2.capture.silenceBuffer; dynCall('vp', $2, [$3]); }; SDL2.capture.silenceTimer = setInterval(silence_callback, ($1 / SDL2.audioContext.sampleRate) * 1000); if ((navigator.mediaDevices !== undefined) && (navigator.mediaDevices.getUserMedia !== undefined)) { navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(have_microphone).catch(no_microphone); } else if (navigator.webkitGetUserMedia !== undefined) { navigator.webkitGetUserMedia({ audio: true, video: false }, have_microphone, no_microphone); } },  
- 331298298: ($0, $1, $2, $3) => { var SDL2 = Module['SDL2']; SDL2.audio.scriptProcessorNode = SDL2.audioContext['createScriptProcessor']($1, 0, $0); SDL2.audio.scriptProcessorNode['onaudioprocess'] = function (e) { if ((SDL2 === undefined) || (SDL2.audio === undefined)) { return; } if (SDL2.audio.silenceTimer !== undefined) { clearInterval(SDL2.audio.silenceTimer); SDL2.audio.silenceTimer = undefined; SDL2.audio.silenceBuffer = undefined; } SDL2.audio.currentOutputBuffer = e['outputBuffer']; dynCall('vp', $2, [$3]); }; SDL2.audio.scriptProcessorNode['connect'](SDL2.audioContext['destination']); if (SDL2.audioContext.state === 'suspended') { SDL2.audio.silenceBuffer = SDL2.audioContext.createBuffer($0, $1, SDL2.audioContext.sampleRate); SDL2.audio.silenceBuffer.getChannelData(0).fill(0.0); var silence_callback = function() { if ((typeof navigator.userActivation) !== 'undefined') { if (navigator.userActivation.hasBeenActive) { SDL2.audioContext.resume(); } } SDL2.audio.currentOutputBuffer = SDL2.audio.silenceBuffer; dynCall('vp', $2, [$3]); SDL2.audio.currentOutputBuffer = undefined; }; SDL2.audio.silenceTimer = setInterval(silence_callback, ($1 / SDL2.audioContext.sampleRate) * 1000); } },  
- 331299473: ($0, $1) => { var SDL2 = Module['SDL2']; var numChannels = SDL2.capture.currentCaptureBuffer.numberOfChannels; for (var c = 0; c < numChannels; ++c) { var channelData = SDL2.capture.currentCaptureBuffer.getChannelData(c); if (channelData.length != $1) { throw 'Web Audio capture buffer length mismatch! Destination size: ' + channelData.length + ' samples vs expected ' + $1 + ' samples!'; } if (numChannels == 1) { for (var j = 0; j < $1; ++j) { setValue($0 + (j * 4), channelData[j], 'float'); } } else { for (var j = 0; j < $1; ++j) { setValue($0 + (((j * numChannels) + c) * 4), channelData[j], 'float'); } } } },  
- 331300078: ($0, $1) => { var SDL2 = Module['SDL2']; var buf = $0 / 4; var numChannels = SDL2.audio.currentOutputBuffer['numberOfChannels']; for (var c = 0; c < numChannels; ++c) { var channelData = SDL2.audio.currentOutputBuffer['getChannelData'](c); if (channelData.length != $1) { throw 'Web Audio output buffer length mismatch! Destination size: ' + channelData.length + ' samples vs expected ' + $1 + ' samples!'; } for (var j = 0; j < $1; ++j) { channelData[j] = HEAPF32[buf + (j*numChannels + c)]; } } },  
- 331300565: ($0) => { var SDL2 = Module['SDL2']; if ($0) { if (SDL2.capture.silenceTimer !== undefined) { clearInterval(SDL2.capture.silenceTimer); } if (SDL2.capture.stream !== undefined) { var tracks = SDL2.capture.stream.getAudioTracks(); for (var i = 0; i < tracks.length; i++) { SDL2.capture.stream.removeTrack(tracks[i]); } } if (SDL2.capture.scriptProcessorNode !== undefined) { SDL2.capture.scriptProcessorNode.onaudioprocess = function(audioProcessingEvent) {}; SDL2.capture.scriptProcessorNode.disconnect(); } if (SDL2.capture.mediaStreamNode !== undefined) { SDL2.capture.mediaStreamNode.disconnect(); } SDL2.capture = undefined; } else { if (SDL2.audio.scriptProcessorNode != undefined) { SDL2.audio.scriptProcessorNode.disconnect(); } if (SDL2.audio.silenceTimer !== undefined) { clearInterval(SDL2.audio.silenceTimer); } SDL2.audio = undefined; } if ((SDL2.audioContext !== undefined) && (SDL2.audio === undefined) && (SDL2.capture === undefined)) { SDL2.audioContext.close(); SDL2.audioContext = undefined; } },  
- 331301571: ($0, $1, $2) => { var w = $0; var h = $1; var pixels = $2; if (!Module['SDL2']) Module['SDL2'] = {}; var SDL2 = Module['SDL2']; if (SDL2.ctxCanvas !== Module['canvas']) { SDL2.ctx = Browser.createContext(Module['canvas'], false, true); SDL2.ctxCanvas = Module['canvas']; } if (SDL2.w !== w || SDL2.h !== h || SDL2.imageCtx !== SDL2.ctx) { SDL2.image = SDL2.ctx.createImageData(w, h); SDL2.w = w; SDL2.h = h; SDL2.imageCtx = SDL2.ctx; } var data = SDL2.image.data; var src = pixels / 4; var dst = 0; var num; if (typeof CanvasPixelArray !== 'undefined' && data instanceof CanvasPixelArray) { num = data.length; while (dst < num) { var val = HEAP32[src]; data[dst ] = val & 0xff; data[dst+1] = (val >> 8) & 0xff; data[dst+2] = (val >> 16) & 0xff; data[dst+3] = 0xff; src++; dst += 4; } } else { if (SDL2.data32Data !== data) { SDL2.data32 = new Int32Array(data.buffer); SDL2.data8 = new Uint8Array(data.buffer); SDL2.data32Data = data; } var data32 = SDL2.data32; num = data32.length; data32.set(HEAP32.subarray(src, src + num)); var data8 = SDL2.data8; var i = 3; var j = i + 4*num; if (num % 8 == 0) { while (i < j) { data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; } } else { while (i < j) { data8[i] = 0xff; i = i + 4 | 0; } } } SDL2.ctx.putImageData(SDL2.image, 0, 0); },  
- 331303037: ($0, $1, $2, $3, $4) => { var w = $0; var h = $1; var hot_x = $2; var hot_y = $3; var pixels = $4; var canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h; var ctx = canvas.getContext("2d"); var image = ctx.createImageData(w, h); var data = image.data; var src = pixels / 4; var dst = 0; var num; if (typeof CanvasPixelArray !== 'undefined' && data instanceof CanvasPixelArray) { num = data.length; while (dst < num) { var val = HEAP32[src]; data[dst ] = val & 0xff; data[dst+1] = (val >> 8) & 0xff; data[dst+2] = (val >> 16) & 0xff; data[dst+3] = (val >> 24) & 0xff; src++; dst += 4; } } else { var data32 = new Int32Array(data.buffer); num = data32.length; data32.set(HEAP32.subarray(src, src + num)); } ctx.putImageData(image, 0, 0); var url = hot_x === 0 && hot_y === 0 ? "url(" + canvas.toDataURL() + "), auto" : "url(" + canvas.toDataURL() + ") " + hot_x + " " + hot_y + ", auto"; var urlBuf = _malloc(url.length + 1); stringToUTF8(url, urlBuf, url.length + 1); return urlBuf; },  
- 331304025: ($0) => { if (Module['canvas']) { Module['canvas'].style['cursor'] = UTF8ToString($0); } },  
- 331304108: () => { if (Module['canvas']) { Module['canvas'].style['cursor'] = 'none'; } },  
- 331304177: () => { return window.innerWidth; },  
- 331304207: () => { return window.innerHeight; }
+  331296304: ($0, $1) => { if (Module['recInput']) Module['recInput']($0, $1 >>> 0); },  
+ 331296366: () => { if (Module['netAfterTick']) Module['netAfterTick'](); },  
+ 331296424: ($0, $1, $2, $3) => { if (Module['recCheck']) Module['recCheck']($0, $1 >>> 0, $2 >>> 0, $3); },  
+ 331296500: ($0) => { if (Module['recEnd']) Module['recEnd']($0); },  
+ 331296548: () => { if (typeof(AudioContext) !== 'undefined') { return true; } else if (typeof(webkitAudioContext) !== 'undefined') { return true; } return false; },  
+ 331296695: () => { if ((typeof(navigator.mediaDevices) !== 'undefined') && (typeof(navigator.mediaDevices.getUserMedia) !== 'undefined')) { return true; } else if (typeof(navigator.webkitGetUserMedia) !== 'undefined') { return true; } return false; },  
+ 331296929: ($0) => { if(typeof(Module['SDL2']) === 'undefined') { Module['SDL2'] = {}; } var SDL2 = Module['SDL2']; if (!$0) { SDL2.audio = {}; } else { SDL2.capture = {}; } if (!SDL2.audioContext) { if (typeof(AudioContext) !== 'undefined') { SDL2.audioContext = new AudioContext(); } else if (typeof(webkitAudioContext) !== 'undefined') { SDL2.audioContext = new webkitAudioContext(); } if (SDL2.audioContext) { if ((typeof navigator.userActivation) === 'undefined') { autoResumeAudioContext(SDL2.audioContext); } } } return SDL2.audioContext === undefined ? -1 : 0; },  
+ 331297481: () => { var SDL2 = Module['SDL2']; return SDL2.audioContext.sampleRate; },  
+ 331297549: ($0, $1, $2, $3) => { var SDL2 = Module['SDL2']; var have_microphone = function(stream) { if (SDL2.capture.silenceTimer !== undefined) { clearInterval(SDL2.capture.silenceTimer); SDL2.capture.silenceTimer = undefined; SDL2.capture.silenceBuffer = undefined } SDL2.capture.mediaStreamNode = SDL2.audioContext.createMediaStreamSource(stream); SDL2.capture.scriptProcessorNode = SDL2.audioContext.createScriptProcessor($1, $0, 1); SDL2.capture.scriptProcessorNode.onaudioprocess = function(audioProcessingEvent) { if ((SDL2 === undefined) || (SDL2.capture === undefined)) { return; } audioProcessingEvent.outputBuffer.getChannelData(0).fill(0.0); SDL2.capture.currentCaptureBuffer = audioProcessingEvent.inputBuffer; dynCall('vp', $2, [$3]); }; SDL2.capture.mediaStreamNode.connect(SDL2.capture.scriptProcessorNode); SDL2.capture.scriptProcessorNode.connect(SDL2.audioContext.destination); SDL2.capture.stream = stream; }; var no_microphone = function(error) { }; SDL2.capture.silenceBuffer = SDL2.audioContext.createBuffer($0, $1, SDL2.audioContext.sampleRate); SDL2.capture.silenceBuffer.getChannelData(0).fill(0.0); var silence_callback = function() { SDL2.capture.currentCaptureBuffer = SDL2.capture.silenceBuffer; dynCall('vp', $2, [$3]); }; SDL2.capture.silenceTimer = setInterval(silence_callback, ($1 / SDL2.audioContext.sampleRate) * 1000); if ((navigator.mediaDevices !== undefined) && (navigator.mediaDevices.getUserMedia !== undefined)) { navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(have_microphone).catch(no_microphone); } else if (navigator.webkitGetUserMedia !== undefined) { navigator.webkitGetUserMedia({ audio: true, video: false }, have_microphone, no_microphone); } },  
+ 331299242: ($0, $1, $2, $3) => { var SDL2 = Module['SDL2']; SDL2.audio.scriptProcessorNode = SDL2.audioContext['createScriptProcessor']($1, 0, $0); SDL2.audio.scriptProcessorNode['onaudioprocess'] = function (e) { if ((SDL2 === undefined) || (SDL2.audio === undefined)) { return; } if (SDL2.audio.silenceTimer !== undefined) { clearInterval(SDL2.audio.silenceTimer); SDL2.audio.silenceTimer = undefined; SDL2.audio.silenceBuffer = undefined; } SDL2.audio.currentOutputBuffer = e['outputBuffer']; dynCall('vp', $2, [$3]); }; SDL2.audio.scriptProcessorNode['connect'](SDL2.audioContext['destination']); if (SDL2.audioContext.state === 'suspended') { SDL2.audio.silenceBuffer = SDL2.audioContext.createBuffer($0, $1, SDL2.audioContext.sampleRate); SDL2.audio.silenceBuffer.getChannelData(0).fill(0.0); var silence_callback = function() { if ((typeof navigator.userActivation) !== 'undefined') { if (navigator.userActivation.hasBeenActive) { SDL2.audioContext.resume(); } } SDL2.audio.currentOutputBuffer = SDL2.audio.silenceBuffer; dynCall('vp', $2, [$3]); SDL2.audio.currentOutputBuffer = undefined; }; SDL2.audio.silenceTimer = setInterval(silence_callback, ($1 / SDL2.audioContext.sampleRate) * 1000); } },  
+ 331300417: ($0, $1) => { var SDL2 = Module['SDL2']; var numChannels = SDL2.capture.currentCaptureBuffer.numberOfChannels; for (var c = 0; c < numChannels; ++c) { var channelData = SDL2.capture.currentCaptureBuffer.getChannelData(c); if (channelData.length != $1) { throw 'Web Audio capture buffer length mismatch! Destination size: ' + channelData.length + ' samples vs expected ' + $1 + ' samples!'; } if (numChannels == 1) { for (var j = 0; j < $1; ++j) { setValue($0 + (j * 4), channelData[j], 'float'); } } else { for (var j = 0; j < $1; ++j) { setValue($0 + (((j * numChannels) + c) * 4), channelData[j], 'float'); } } } },  
+ 331301022: ($0, $1) => { var SDL2 = Module['SDL2']; var buf = $0 / 4; var numChannels = SDL2.audio.currentOutputBuffer['numberOfChannels']; for (var c = 0; c < numChannels; ++c) { var channelData = SDL2.audio.currentOutputBuffer['getChannelData'](c); if (channelData.length != $1) { throw 'Web Audio output buffer length mismatch! Destination size: ' + channelData.length + ' samples vs expected ' + $1 + ' samples!'; } for (var j = 0; j < $1; ++j) { channelData[j] = HEAPF32[buf + (j*numChannels + c)]; } } },  
+ 331301509: ($0) => { var SDL2 = Module['SDL2']; if ($0) { if (SDL2.capture.silenceTimer !== undefined) { clearInterval(SDL2.capture.silenceTimer); } if (SDL2.capture.stream !== undefined) { var tracks = SDL2.capture.stream.getAudioTracks(); for (var i = 0; i < tracks.length; i++) { SDL2.capture.stream.removeTrack(tracks[i]); } } if (SDL2.capture.scriptProcessorNode !== undefined) { SDL2.capture.scriptProcessorNode.onaudioprocess = function(audioProcessingEvent) {}; SDL2.capture.scriptProcessorNode.disconnect(); } if (SDL2.capture.mediaStreamNode !== undefined) { SDL2.capture.mediaStreamNode.disconnect(); } SDL2.capture = undefined; } else { if (SDL2.audio.scriptProcessorNode != undefined) { SDL2.audio.scriptProcessorNode.disconnect(); } if (SDL2.audio.silenceTimer !== undefined) { clearInterval(SDL2.audio.silenceTimer); } SDL2.audio = undefined; } if ((SDL2.audioContext !== undefined) && (SDL2.audio === undefined) && (SDL2.capture === undefined)) { SDL2.audioContext.close(); SDL2.audioContext = undefined; } },  
+ 331302515: ($0, $1, $2) => { var w = $0; var h = $1; var pixels = $2; if (!Module['SDL2']) Module['SDL2'] = {}; var SDL2 = Module['SDL2']; if (SDL2.ctxCanvas !== Module['canvas']) { SDL2.ctx = Browser.createContext(Module['canvas'], false, true); SDL2.ctxCanvas = Module['canvas']; } if (SDL2.w !== w || SDL2.h !== h || SDL2.imageCtx !== SDL2.ctx) { SDL2.image = SDL2.ctx.createImageData(w, h); SDL2.w = w; SDL2.h = h; SDL2.imageCtx = SDL2.ctx; } var data = SDL2.image.data; var src = pixels / 4; var dst = 0; var num; if (typeof CanvasPixelArray !== 'undefined' && data instanceof CanvasPixelArray) { num = data.length; while (dst < num) { var val = HEAP32[src]; data[dst ] = val & 0xff; data[dst+1] = (val >> 8) & 0xff; data[dst+2] = (val >> 16) & 0xff; data[dst+3] = 0xff; src++; dst += 4; } } else { if (SDL2.data32Data !== data) { SDL2.data32 = new Int32Array(data.buffer); SDL2.data8 = new Uint8Array(data.buffer); SDL2.data32Data = data; } var data32 = SDL2.data32; num = data32.length; data32.set(HEAP32.subarray(src, src + num)); var data8 = SDL2.data8; var i = 3; var j = i + 4*num; if (num % 8 == 0) { while (i < j) { data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; data8[i] = 0xff; i = i + 4 | 0; } } else { while (i < j) { data8[i] = 0xff; i = i + 4 | 0; } } } SDL2.ctx.putImageData(SDL2.image, 0, 0); },  
+ 331303981: ($0, $1, $2, $3, $4) => { var w = $0; var h = $1; var hot_x = $2; var hot_y = $3; var pixels = $4; var canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h; var ctx = canvas.getContext("2d"); var image = ctx.createImageData(w, h); var data = image.data; var src = pixels / 4; var dst = 0; var num; if (typeof CanvasPixelArray !== 'undefined' && data instanceof CanvasPixelArray) { num = data.length; while (dst < num) { var val = HEAP32[src]; data[dst ] = val & 0xff; data[dst+1] = (val >> 8) & 0xff; data[dst+2] = (val >> 16) & 0xff; data[dst+3] = (val >> 24) & 0xff; src++; dst += 4; } } else { var data32 = new Int32Array(data.buffer); num = data32.length; data32.set(HEAP32.subarray(src, src + num)); } ctx.putImageData(image, 0, 0); var url = hot_x === 0 && hot_y === 0 ? "url(" + canvas.toDataURL() + "), auto" : "url(" + canvas.toDataURL() + ") " + hot_x + " " + hot_y + ", auto"; var urlBuf = _malloc(url.length + 1); stringToUTF8(url, urlBuf, url.length + 1); return urlBuf; },  
+ 331304969: ($0) => { if (Module['canvas']) { Module['canvas'].style['cursor'] = UTF8ToString($0); } },  
+ 331305052: () => { if (Module['canvas']) { Module['canvas'].style['cursor'] = 'none'; } },  
+ 331305121: () => { return window.innerWidth; },  
+ 331305151: () => { return window.innerHeight; }
 };
 
 // Imports from the Wasm binary.
@@ -11702,6 +11757,9 @@ var _free,
   _rtw_pause,
   _rtw_option,
   _ge_rtw_option,
+  _ge_rtw_own_option,
+  _ge_rtw_option_now,
+  _ge_rtw_hash_mask_add,
   _rtw_start,
   _ge_rtw_before_main,
   _ge_rtw_after_main,
@@ -11727,8 +11785,8 @@ var _free,
   dynCall_ijifffj,
   dynCall_ji,
   dynCall_vj,
-  dynCall_vjijdddjjj,
   dynCall_ijjjj,
+  dynCall_vjijdddjjj,
   dynCall_jj,
   dynCall_viiiiijj,
   dynCall_j,
@@ -11865,6 +11923,9 @@ function assignWasmExports(wasmExports) {
   Module['_rtw_pause'] = _rtw_pause = wasmExports['rtw_pause'];
   Module['_rtw_option'] = _rtw_option = wasmExports['rtw_option'];
   Module['_ge_rtw_option'] = _ge_rtw_option = wasmExports['ge_rtw_option'];
+  Module['_ge_rtw_own_option'] = _ge_rtw_own_option = wasmExports['ge_rtw_own_option'];
+  Module['_ge_rtw_option_now'] = _ge_rtw_option_now = wasmExports['ge_rtw_option_now'];
+  Module['_ge_rtw_hash_mask_add'] = _ge_rtw_hash_mask_add = wasmExports['ge_rtw_hash_mask_add'];
   Module['_rtw_start'] = _rtw_start = wasmExports['rtw_start'];
   Module['_ge_rtw_before_main'] = _ge_rtw_before_main = wasmExports['ge_rtw_before_main'];
   Module['_ge_rtw_after_main'] = _ge_rtw_after_main = wasmExports['ge_rtw_after_main'];
@@ -11890,8 +11951,8 @@ function assignWasmExports(wasmExports) {
   dynCalls['ijifffj'] = dynCall_ijifffj = wasmExports['dynCall_ijifffj'];
   dynCalls['ji'] = dynCall_ji = wasmExports['dynCall_ji'];
   dynCalls['vj'] = dynCall_vj = wasmExports['dynCall_vj'];
-  dynCalls['vjijdddjjj'] = dynCall_vjijdddjjj = wasmExports['dynCall_vjijdddjjj'];
   dynCalls['ijjjj'] = dynCall_ijjjj = wasmExports['dynCall_ijjjj'];
+  dynCalls['vjijdddjjj'] = dynCall_vjijdddjjj = wasmExports['dynCall_vjijdddjjj'];
   dynCalls['jj'] = dynCall_jj = wasmExports['dynCall_jj'];
   dynCalls['viiiiijj'] = dynCall_viiiiijj = wasmExports['dynCall_viiiiijj'];
   dynCalls['j'] = dynCall_j = wasmExports['dynCall_j'];
@@ -12732,6 +12793,8 @@ var wasmImports = {
   /** @export */
   gertw_net_session: _gertw_net_session,
   /** @export */
+  gertw_settings_put: _gertw_settings_put,
+  /** @export */
   proc_exit: _proc_exit,
   /** @export */
   rtw_build_id: _rtw_build_id,
@@ -12767,8 +12830,8 @@ function applySignatureConversions(wasmExports) {
   var makeWrapper__p_ = (f) => (a0, a1) => f(BigInt(a0), a1);
   var makeWrapper__p___ = (f) => (a0, a1, a2, a3) => f(BigInt(a0), a1, a2, a3);
   var makeWrapper__p______ = (f) => (a0, a1, a2, a3, a4, a5, a6) => f(BigInt(a0), a1, a2, a3, a4, a5, a6);
-  var makeWrapper__p_________ = (f) => (a0, a1, a2, a3, a4, a5, a6, a7, a8, a9) => f(BigInt(a0), a1, a2, a3, a4, a5, a6, a7, a8, a9);
   var makeWrapper__p____ = (f) => (a0, a1, a2, a3, a4) => f(BigInt(a0), a1, a2, a3, a4);
+  var makeWrapper__p_________ = (f) => (a0, a1, a2, a3, a4, a5, a6, a7, a8, a9) => f(BigInt(a0), a1, a2, a3, a4, a5, a6, a7, a8, a9);
   var makeWrapper__p_______ = (f) => (a0, a1, a2, a3, a4, a5, a6, a7) => f(BigInt(a0), a1, a2, a3, a4, a5, a6, a7);
   var makeWrapper__p_____ = (f) => (a0, a1, a2, a3, a4, a5) => f(BigInt(a0), a1, a2, a3, a4, a5);
   var makeWrapper__p________ = (f) => (a0, a1, a2, a3, a4, a5, a6, a7, a8) => f(BigInt(a0), a1, a2, a3, a4, a5, a6, a7, a8);
@@ -12793,8 +12856,8 @@ function applySignatureConversions(wasmExports) {
   wasmExports['dynCall_ijifffj'] = makeWrapper__p______(wasmExports['dynCall_ijifffj']);
   wasmExports['dynCall_ji'] = makeWrapper__p_(wasmExports['dynCall_ji']);
   wasmExports['dynCall_vj'] = makeWrapper__p_(wasmExports['dynCall_vj']);
-  wasmExports['dynCall_vjijdddjjj'] = makeWrapper__p_________(wasmExports['dynCall_vjijdddjjj']);
   wasmExports['dynCall_ijjjj'] = makeWrapper__p____(wasmExports['dynCall_ijjjj']);
+  wasmExports['dynCall_vjijdddjjj'] = makeWrapper__p_________(wasmExports['dynCall_vjijdddjjj']);
   wasmExports['dynCall_jj'] = makeWrapper__p_(wasmExports['dynCall_jj']);
   wasmExports['dynCall_viiiiijj'] = makeWrapper__p_______(wasmExports['dynCall_viiiiijj']);
   wasmExports['dynCall_j'] = makeWrapper__p(wasmExports['dynCall_j']);

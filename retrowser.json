@@ -18,23 +18,23 @@
   "files": {
     "wasm": {
       "path": "ge007.wasm",
-      "sha256": "4fe82d53fd926ea7c06b429c07972ab81100085b9c635da248ed6b400a234fe5",
-      "size": 3226247
+      "sha256": "21379b228833e731aa26424ab6075e9e2ff4ff7b5983ab5c1d4f6d49c16a77c0",
+      "size": 3232934
     },
     "js": {
       "path": "ge007.js",
-      "sha256": "b261d3c7b893d2c8db1fced2dec4f774fcca8f3a8f24ee68d781032b87c380ce",
-      "size": 485133
+      "sha256": "d834ba6499d535d3f266efe084fb37057c566727a833dc41b43b7ea79d2d8a8b",
+      "size": 488390
     },
     "data": [
       {
         "path": "ge007.romfill",
-        "sha256": "54422847410a9bd6cbafc2ef1a670e7e588b5cfce7c475c47ea2bc7281fa1fb7",
-        "size": 175092
+        "sha256": "9fc90e94af61b08a231c333626173a7aa260d8670f41e0dba7294f273961b643",
+        "size": 174812
       },
       {
         "path": "ge007.netregions",
-        "sha256": "c1f0a6163b86a9898e1173fd58fe38de151d9af730670f876f730691be74bd5b",
+        "sha256": "403b7c68b7e60422d9f1c4397e7adeb129482ad0861c1403efb55e229167070a",
         "size": 74072
       }
     ]
@@ -116,31 +116,6 @@
       "max": 16
     },
     {
-      "id": 1,
-      "label": "Aspect ratio",
-      "type": "enum",
-      "default": 1,
-      "inGame": true,
-      "choices": [
-        {
-          "value": 0,
-          "label": "Fill (widescreen)"
-        },
-        {
-          "value": 1,
-          "label": "Original 4:3"
-        },
-        {
-          "value": 2,
-          "label": "16:9"
-        },
-        {
-          "value": 3,
-          "label": "21:9"
-        }
-      ]
-    },
-    {
       "id": 9,
       "label": "Control style",
       "type": "enum",
@@ -174,15 +149,6 @@
       "inGame": true
     },
     {
-      "id": 19,
-      "label": "Vibration %",
-      "type": "int",
-      "default": 50,
-      "min": 0,
-      "max": 100,
-      "inGame": true
-    },
-    {
       "id": 5,
       "label": "Field of view %",
       "type": "int",
@@ -201,40 +167,6 @@
       "inGame": true
     },
     {
-      "id": 7,
-      "label": "Texture filter",
-      "type": "enum",
-      "default": 1,
-      "inGame": true,
-      "choices": [
-        {
-          "value": 0,
-          "label": "Nearest"
-        },
-        {
-          "value": 1,
-          "label": "Bilinear"
-        },
-        {
-          "value": 2,
-          "label": "N64 3-point"
-        },
-        {
-          "value": 3,
-          "label": "Trilinear"
-        }
-      ]
-    },
-    {
-      "id": 13,
-      "label": "HUD scale %",
-      "type": "int",
-      "default": 100,
-      "min": 75,
-      "max": 150,
-      "inGame": true
-    },
-    {
       "id": 11,
       "label": "Screen shake %",
       "type": "int",
@@ -246,20 +178,6 @@
     {
       "id": 12,
       "label": "No hit flash",
-      "type": "bool",
-      "default": 0,
-      "inGame": true
-    },
-    {
-      "id": 14,
-      "label": "Hide crosshair",
-      "type": "bool",
-      "default": 0,
-      "inGame": true
-    },
-    {
-      "id": 15,
-      "label": "Show FPS",
       "type": "bool",
       "default": 0,
       "inGame": true
