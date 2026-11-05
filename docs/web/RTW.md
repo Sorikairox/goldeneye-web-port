@@ -41,7 +41,7 @@ Never with a ROM, sidecars, saves or pictures. `ge007.romfill` is offsets only (
 | `memory` | 384 / 384 MiB, `memory64: true` | the `-sMEMORY64=2` (lowered) shape; module-defined memory; 2112 MiB before G12 |
 | `save` | `eeprom`, 512 bytes | the cart's real 4 Kbit EEPROM, native byte order (below) |
 | `controls.extra` | 16 Reload, 17 Crouch, 18 Screenshot, 19 Options | port actions without an N64 button; screenshot -> PNG via `rtw_export_file`; Options opens the port's options overlay (F10 on the site) |
-| `options` | 4 shown + 15 `inGame` (section "Options (standard 1.2)") | the host's menu shows only start-up options; the others are set in the overlay |
+| `options` | 4 shown + 8 `inGame` (section "Options (standard 1.2)") | the host's menu shows only start-up options; the others are set in the overlay; picture / feel settings are not in the manifest (kept by the game per player, G16) |
 | `net` | `{ "players": 4, "model": "lockstep" }` | online play (section "Online play (standard 1.2)") |
 
 ## Build (CMake `GE_RTW`)
@@ -172,9 +172,21 @@ keeps the input ring, frame barrier, input delay, det mode and state hashes; `po
 - **Gone versus net.js**: rooms, codes, RTCPeerConnection, pings, the `config` message, `_ge_net_eeprom_buf` (the host
   hands over the room host's native save: `rtw_save_load` -> `ge_web_eeprom_load`), `GENet.hold`, the hidden-tab ticker.
 - **Session rules in rtw.c**: options 8 / 9 are not applied (webnet.c `geNetApplySessionConfig` pins all-unlocked off and
-  OG controls, and runs again after the start-up option pass); `rtw_option` after the start is ignored except for the
-  picture-only ids 1 / 7 / 15 / 16 (the 1.2 host locks options in a session anyway); the host's pads 1-3 never override
-  controllers or presence (the session's input ring does); no option changes are reported; the overlay is refused.
+  OG controls, and runs again after the start-up option pass); `rtw_option` after the start is ignored except for 16
+  (the 1.2 host locks options in a session anyway); the host's pads 1-3 never override controllers or presence (the
+  session's input ring does); no option changes are reported to the host; each player's own settings (section
+  "Whose setting it is (G16)") come from its own settings record; the overlay opens with only those editable; no
+  Rumble Pak (`inputRumbleSupported` 0).
+- **State hash without the display lists (G16)**: the game's display-list output lives in the hashed N64 DRAM (gfx pool
+  `g_GfxBuffers` in the stage bank, vtx pool `g_VtxBuffers` at DRAM + 0x700000) and a few static records describe it
+  (`g_GfxMemPos`, `g_gfxTaskSettings`: the RSP task with the list's length). Per-player HUD scale changes them, so in
+  a session `__wrap_geNetRetraceDone` blanks those ranges for the hash and restores them (the record ranges come from
+  rtw_net.js `HASH_MASK` via the netregions symbols, `ge_rtw_hash_mask_add`); `__wrap_geNetHashBytes` (webkernel.c's
+  stack hash S only; webnet.c's own calls are in its file, not wrapped) reads saved fiber words that point into the
+  two pools as 0 (a waiting frame holds a list position); `__wrap_mempResetBank` zeroes the old gfx pool when the stage
+  bank is reset (a new stage), else each peer's last lists leaked into unmasked memory for ~2 s (seen once in a test:
+  transient desync at N64 DRAM 80103000, inside the old pool). A real divergence elsewhere is still found (DESYNC test:
+  DRAM 80200000).
 - **Tests**: `scripts/rtw/rtw_net_e2e.mjs <build dir> <out> [rom]` (env PLAYERS 2-4, FRAMES, DROP, DESYNC, LEAVE, SOLO,
   RTW_HOST_DIST): pages in one muted headless Chrome against the host's built dist with its in-process room server.
 
@@ -187,16 +199,57 @@ keeps those settings across starts.
 
 - **Shown**: 16 Resolution (module-side buffer size; no overlay row), 2 Skip intro (read once, on the first main menu,
   lv.c), 17 Online play, 18 Online input delay (0 = auto).
-- **inGame**: 1 Aspect ratio, 3 Mouse sensitivity (1..500), 4 Invert mouse Y, 5 Field of view (game-side FOV, frustum
-  culling), 6 Draw distance (game-side far clip), 7 Texture filter, 8 All levels unlocked, 9 Control style, 11 Screen shake
-  (fr.c, 0..1000 % = ini 0..10), 12 No hit flash, 13 HUD scale, 14 Hide crosshair, 15 Show FPS, 19 Vibration %
-  (Input.RumbleScale).
+- **inGame** (the room host's in a session): 3 Mouse sensitivity (1..500), 4 Invert mouse Y, 5 Field of view (game-side
+  FOV, frustum culling), 6 Draw distance (game-side far clip), 8 All levels unlocked, 9 Control style, 11 Screen shake
+  (fr.c, 0..1000 % = ini 0..10), 12 No hit flash.
+- **Not in the manifest since G16** (each player's own, kept by the game): 1 Aspect ratio, 7 Texture filter, 13 HUD scale,
+  14 Hide crosshair, 15 Show FPS, 19 Vibration % (Input.RumbleScale). Players who had set them in G14 / G15 get the
+  defaults again until they set them in the overlay (the host no longer sends them).
 - **Dropped**: 10 Rumble (a bool), replaced by 19.
+
+### Whose setting it is (G16, user decision 2026-11-05)
+
+In a lockstep session everything that changes how much a player sees follows the room host, so nobody gets an edge;
+every other picture or feel setting stays each player's own. Offline every setting is the player's. What the code does:
+
+| Setting | What it does | Online |
+|---|---|---|
+| 1 Aspect ratio | Offline Hor+: Native widescreen (on by default) projects the world at the output aspect (Fill = window, 16:9, 21:9; Original = 4:3 with bars). A session pins Native widescreen and Widescreen auto off (`geNetApplySessionConfig`): the world is always projected at 4:3 and the aspect only stretches the picture (and HUD) to the rectangle or adds bars. No wider view online. | own |
+| 5 Field of view | `portScaleFovY` (projection), frustum culling, room pool (`portRoomPoolScale`): a wider view, and game state | room host's |
+| 6 Draw distance | far clip and room culling (`drawdistgameplay.c`, hashed): farther view, game state | room host's |
+| 12 No hit flash | drops the white / red overlay that hides the view while hit; writes the player's fade state (`currentPlayerSetFadeColour`), which the game reads (bondview2.c `colourscreenfrac` tests) | room host's |
+| 11 Screen shake | `viShake` amplitude (fr.c, game state); shake hides the view | room host's |
+| 16 Resolution | buffer size only (same projection, same view area) | own (the record's copy) |
+| 7 Texture filter, 15 Show FPS | renderer / overlay only | own |
+| 13 HUD scale | the game's HUD display lists only (left out of the hash, above) | own |
+| 14 Hide crosshair | offline the game's switch; online the crosshair's opacity 0 (the switch would also skip the crosshair's texture load into the game's texture cache, which is game state) | own |
+| 19 Vibration % | motor strength; no Rumble Pak online | own |
+| 3 / 4 mouse | the mouse never reaches the game online (pure pad) | room host's (no effect) |
+
+- **Settings record**: rtw_lib.js `$gertwSettings`, one object `{ id: value }` in this sandbox origin's IndexedDB
+  (`ge007-rtw` / `files`, key `settings-v1`, beside the sidecar cache; the host never reads it). Read at every start
+  before `ge_rtw_before_main` (`ge_rtw_own_option` per entry), sessions included; written on every change
+  (`geRtwPump` -> `gertw_settings_put`). 16 Resolution: outside a session the host's value is copied in; a session uses
+  the copy instead of the room host's.
+- **A session never overwrites the stored choice**: the host boots a session with the room host's values without storing
+  them, and the module reports nothing during a session; after leaving, the player's own values are back (test).
+- **Overlay in a session**: the rtw build compiles a copy of optionsoverlay.c (`scripts/rtw/rtw_overlay_src.py`, exact
+  replacements, fails on any upstream drift; the shared file is untouched). It opens during a session; the root list
+  shows Video, Mouse, Controller, Game; rows: own settings (editable), the room host's mapped settings (locked, tip "Set
+  by the room host during online play."), Back, the Player 1 link; everything else is hidden (Bond-file values,
+  presets, resets, bindings, Restart / Quit). `rowSetCommit` / `rowAdjust` refuse locked and hidden rows; `geRtwPump`
+  puts back any room-host value that changed by another path. frontoptions.c (hashed) sees no overlay during a session
+  (CMake compile definitions: `optionsOverlayIsOpen` / `optionsOverlayToggle` -> `geRtwOverlayOpenForGame` /
+  `geRtwOverlayToggleForGame`), else file select would reset its idle timer on one machine only.
+- **Tests**: `rtw_net_e2e.mjs` with `RTW_OPTIONS_HOST` / `RTW_OPTIONS_GUEST` (view options), `RTW_OWN_HOST` /
+  `RTW_OWN_GUEST` (own settings), `LEVEL=1` (into Dam, aim and fire), `OVERLAY=1`, `GUEST_LEAVE=1`;
+  `rtw_options_e2e.mjs` (record vs host store, both after a reload).
 - **The game's menu**: the port's options overlay (F10 on the site) opens with extra button 19 Options (host key 4 by
-  default). While it is open host pad 0 drives it through the wrapped `SDL_GetKeyboardState` (stick / D-pad = arrows, A =
+  default; during a session too, since G16). While it is open host pad 0 drives it through the wrapped `SDL_GetKeyboardState` (stick / D-pad = arrows, A =
   Enter, B = Backspace: back / close from the top page, Start closes); buttons still held when it closes are held back
   from the game until released. `geRtwPump` (once per frame, gfx_rtw.cpp `handle_events`) polls every mapped key and calls
-  `rtw_option_changed` on a change (rounded, clamped to the manifest range; host values are not echoed).
+  `rtw_option_changed` on a change of a room-host option outside a session (rounded, clamped to the manifest range; host
+  values are not echoed), or stores an own setting in the settings record.
 - **Fixed on the way**: "N64 3-point" texture filter (option 7 = 2) stopped the game: fast3d's fragment shader called
   `mix(vec4, vec4, int)`, which GLSL ES 3.00 lacks. G14 worked around it in the rtw build only (a wrapped
   `glShaderSource` rewrote the call); since G15 the source itself uses `float(three_point_filter)` (gfx_opengl.cpp, web,

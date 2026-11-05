@@ -3,7 +3,11 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 .. G15, 2026-11-05)
+## Current state (after G3 .. G16, 2026-11-05)
+
+G16: **retrowser online play: view settings follow the room host, picture / feel settings are each player's own**
+(section "Whose setting it is online (G16)" below; RTW.md "Whose setting it is (G16 ...)"). rtw build only; the site
+build is byte-identical. Not deployed (the retrowser build is published on `web` / `rtw-dist`).
 
 G15: **"N64 3-point" texture filter no longer stops the site** (section "N64 3-point filter (G15)" below): the fragment
 shader's two `mix(..., three_point_filter)` calls take `float(three_point_filter)`; the rtw-only shader rewrite is gone.
@@ -73,6 +77,50 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## Whose setting it is online (G16, 2026-11-05)
+
+User decision: in a lockstep session everything that changes how much a player sees follows the room host; every other
+picture or feel setting stays each player's own; offline every setting is the player's. Details, the per-setting table
+and the mechanisms: `docs/web/RTW.md` "Whose setting it is (G16 ...)" and "State hash without the display lists".
+- **What the code does**: Aspect ratio is Hor+ offline (Native widescreen projects at the output aspect), but a session
+  pins Native widescreen off, so online the world is always 4:3 and the aspect only stretches / adds bars: per player.
+  FOV and draw distance widen / deepen the view and are game state: room host's. No hit flash hides nothing while hit
+  and writes the player's fade state the game reads: room host's (the user's list had it as cosmetic; it is an edge and
+  game state). Resolution is the buffer size only: per player (the record's copy in a session). Mouse settings have no
+  effect online (pure pad). Screen shake stays the room host's (game state).
+- **Final lists**: room host's online (manifest inGame): 5 FOV, 6 draw distance, 12 no hit flash, 11 screen shake, 3 / 4 /
+  8 / 9 (and the start-up 2 / 17 / 18). Each player's own (not in the manifest, the game's settings record): 1 aspect,
+  7 texture filter, 13 HUD scale, 14 hide crosshair, 15 show FPS, 19 vibration; 16 resolution (start-up option, own copy).
+- **2fcd839a feature**: rtw.c (settings record API, apply order host -> record, pump: own -> record, room host's -> host
+  outside a session / put back inside; crosshair as opacity online; no Rumble Pak online; overlay row rules; hash wraps
+  `geNetRetraceDone` / `geNetHashBytes` / `mempResetBank`), rtw_lib.js `$gertwSettings` (IndexedDB `ge007-rtw` / `files`
+  / `settings-v1`), rtw_net.js (hash-mask symbols, test aids optionNow / settings / setOwn), CMake GE_RTW (overlay copy
+  from scripts/rtw/rtw_overlay_src.py, frontoptions.c compile definitions, three wraps), manifest without 1/7/13/14/15/19.
+- **53842a85 tests**, **51bedc95 publish**: rtw-dist 00f7ffb4 (build id eeb9af93...), root build id 0df87453...,
+  `rtw.mjs check . --rom` OK.
+- **Found on the way** (each fixed in the rtw build; first hash runs failed): the gfx task records `g_gfxTaskSettings`
+  (list length) and the fibers' saved list pointers (S) differ with HUD scale; Hide crosshair skips the crosshair's
+  texture load (texture cache = game state); a new stage leaves each peer's old lists in freed stage memory (transient
+  desync at DRAM 80103000 inside the old gfx pool, ~2 s); the overlay's first page row was a separator.
+- **Tests** (muted headless Chrome; net runs through the chrome lock; retrowser dist as in ~/Code/retrowser/dist):
+  - `rtw_net_e2e.mjs` 2 players, host FOV 120 / draw 400 vs guest 80 / 150, own aspect 1 vs 0, filter 1 vs 0, HUD 100 vs
+    150, crosshair shown vs hidden, FPS off vs on, vibration 50 vs 0, `LEVEL=1 FRAMES=1500 OVERLAY=1 GUEST_LEAVE=1`, on
+    build/rtw and on the repo-layout copy (git archive): both peers FOV 120 / draw 400, own values kept, into Dam (aim +
+    fire), 64/64 hash points equal (1630..2260), overlay in the session: FOV / draw / no hit flash locked (tip shown),
+    HUD 150 -> 135 stored in the record, 64/64 equal after; guest leaves: 80 / 150 back, its stored host options
+    unchanged. ALL PASS. Two more 2500-retrace runs: desync none to 4020.
+  - one own setting at a time vs the host (13 / 15 / 1 / 14 / 7 / 19) in Dam: all equal after the fixes; 4 players
+    (own aspect 21:9 / trilinear / HUD 75 / no crosshair / FPS / no vibration on the guests, LEVEL, DROP): 64/64, drop
+    agreed, 64/64 after; 3 players DROP + DESYNC: report at N64 DRAM 80200000 (real divergence still found); 2 players
+    LEAVE + SOLO: PASS; resolution 2 vs 0 kept per peer in a session.
+  - `rtw_options_e2e.mjs` ALL PASS (default steps; and Display mode -> Original N64: 1 = 1, 7 = 2 in the record, 6 = 100 at
+    the host, all back after a reload). `e2e_rtw.mjs dev` 12/12 PASS, `offline` (repo-layout copy) PASS.
+  - Site byte-identical: HEAD pinned at 51e8bbd2 (the live build's VERSION_HASH) + `git checkout web -- .`,
+    `scripts/web/build.sh`: all 16 files of build-web/site equal G15's (wasm 61718646..., romfill d09588da..., js
+    e45e2488..., sw-build 25f5feeb4238841a).
+- **Open**: players who set 1 / 7 / 13 / 14 / 15 / 19 in G14 / G15 get the defaults once (the host no longer sends
+  them). The test's overlay key route depends on the overlay's page layout (OVERLAY_KEYS env overrides it).
 
 ## N64 3-point filter (G15, 2026-11-05)
 
