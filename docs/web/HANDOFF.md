@@ -3,7 +3,10 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 .. G17, 2026-11-05)
+## Current state (after G3 .. G18, 2026-11-06)
+
+G18: **retrowser game icon** (section "Game icon (G18)" below): the manifest's standard 1.2 `icon` is the web site's
+own 512x512 icon. rtw output only; the site build is byte-identical. Not deployed.
 
 G17: **retrowser cartridge picture** (section "Cartridge picture (G17)" below): the manifest's standard 1.2 `picture`
 is the official EU box art. rtw output only; the site build is byte-identical. Not deployed.
@@ -99,6 +102,25 @@ decision: the official box art. File: libretro-thumbnails, Nintendo_-_Nintendo_6
   PASS; rtw-dist e2b5d4b1. build-web/site untouched (16 files, same SHA-256 before and after).
 - Changing the picture: replace `art/cover.png` (PNG/JPEG/WebP, <= 512 KiB, <= 4096 px; N64 label crops to 4:3),
   update the credit in the template + README, run `publish_rtw.sh --no-build --dist`.
+
+## Game icon (G18, 2026-11-06)
+
+retrowser standard 1.2 (retrowser 21a5fab, spec 2.2) adds `"icon": { path, sha256, size }`: PNG only, square, 192-1024 px,
+<= 256 KiB (512 recommended), path relative to the manifest and ending in `.png`; shown in the browser tab, the home
+page's recent games and as the home-screen app icon. User decision: the site's own icon `port/web/icon-512.png`
+(512x512 RGB PNG, 3575 B, sha256 6708f69fac5b3121…), used as is (no copy under `art/`).
+- Same way as the picture: template `icon` { path `icon.png` }; `build_rtw.sh` copies `port/web/icon-512.png` to
+  build/rtw/icon.png; `publish_rtw.sh` copies it into build/rtw too, puts the template's `picture` and `icon` into
+  build/rtw/retrowser.json, re-hashes, copies it to `retrowser/icon.png` (root path `retrowser/icon.png`) and adds
+  `icon.png` to `rtw-dist`.
+- Run: retrowser `npm run build`, then `publish_rtw.sh --no-build --dist` (build/rtw had the same bytes as the
+  committed `retrowser/` files and no code changed since 2fcd839a; no wasm rebuild). rtw check --rom OK, build id
+  853d02c6…, 0 errors/warnings, icon 512x512, picture png 512x374; romscan PASS; rtw-dist 89025c2d.
+- Note: the bundled `dist/tools/rtw.mjs check` (tools/rtw-cli.ts) prints only `OK <manifest>  build id …`, without the
+  picture / icon suffix; `node tools/rtw-check.ts` prints `… picture png 512×374  icon 512×512`, and
+  `rtw.mjs check --json` reports icon {width 512, height 512}. A retrowser CLI gap, not a GoldenEye one.
+- Changing the icon: replace `port/web/icon-512.png` (it is also the site's icon) or point the scripts at another
+  square PNG, run `publish_rtw.sh --no-build --dist`.
 
 ## Whose setting it is online (G16, 2026-11-05)
 

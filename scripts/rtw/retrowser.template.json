@@ -19,6 +19,7 @@
   },
   "picture": { "path": "cover.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0,
                "credit": "Box art © Nintendo / Rare; James Bond © Danjaq / MGM · image from libretro-thumbnails" },
+  "icon": { "path": "icon.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 },
   "module": { "factory": "createGoldenEye", "loop": "mainloop" },
   "video": "webgl",
   "hz": 50,

@@ -29,6 +29,8 @@ git add retrowser.json retrowser && git commit                   # one commit on
 Never with a ROM, sidecars, saves or game screenshots. `ge007.romfill` is offsets only (the script checks its exact layout).
 The one picture is the cartridge label (G17, below): `retrowser/cover.png` (and `cover.png` on `rtw-dist`), copied from
 the committed source art `art/cover.png` (outside `retrowser/`, which the script wipes).
+The game icon (G18) is `retrowser/icon.png` (and `icon.png` on `rtw-dist`), copied from the site's own icon
+`port/web/icon-512.png`.
 
 ## Manifest (`scripts/rtw/retrowser.template.json`, hashed by rtw-hash)
 
@@ -46,6 +48,7 @@ the committed source art `art/cover.png` (outside `retrowser/`, which the script
 | `options` | 4 shown + 8 `inGame` (section "Options (standard 1.2)") | the host's menu shows only start-up options; the others are set in the overlay; picture / feel settings are not in the manifest (kept by the game per player, G16) |
 | `net` | `{ "players": 4, "model": "lockstep" }` | online play (section "Online play (standard 1.2)") |
 | `picture` | `cover.png` (root manifest: `retrowser/cover.png`), credit `Box art © Nintendo / Rare; James Bond © Danjaq / MGM · image from libretro-thumbnails` | standard 1.2 cartridge label (G17): the official EU box art from libretro-thumbnails (Nintendo_-_Nintendo_64, Named_Boxarts, "GoldenEye 007 (Europe).png", 512x374 PNG, 230608 B, sha256 `926e59db…`), source `art/cover.png`; `build_rtw.sh` copies it into build/rtw and `publish_rtw.sh` adds it to build/rtw (also for `--no-build`), `retrowser/` and `rtw-dist`; not passed to the module, not in the download size |
+| `icon` | `icon.png` (root manifest: `retrowser/icon.png`) | standard 1.2 game icon (G18, spec 2.2: PNG, square, 192-1024 px, <= 256 KiB): the web site's own icon `port/web/icon-512.png` (512x512, 3575 B, sha256 `6708f69f…`); copied by `build_rtw.sh` / `publish_rtw.sh` exactly like the picture; tab, recent games and home-screen app icon on retrowser.app |
 
 ## Build (CMake `GE_RTW`)
 

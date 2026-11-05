@@ -2,7 +2,7 @@
 # Build the retrowser.app v1 module (docs/web/RTW.md) into build/rtw/:
 #   ge007.js (MODULARIZE factory createGoldenEye, worker), ge007.wasm (template, ROM data zeroed),
 #   ge007.romfill (offsets-only fill table, files.data), ge007.netregions (online state-hash ranges of this build's
-#   link map, files.data; scripts/web/netregions.py), cover.png (the cartridge picture, art/cover.png),
+#   link map, files.data; scripts/web/netregions.py), cover.png (the cartridge picture, art/cover.png), icon.png (the game icon, port/web/icon-512.png),
 #   retrowser.json (hashed with rtw-hash, checked with rtw-check).
 #   scripts/rtw/build_rtw.sh [Release|RelWithDebInfo]       (default RelWithDebInfo, like the web site; DWARF stripped)
 # Env: RTW_REPO (a retrowser checkout, default $HOME/Code/retrowser), RTW_ROM (ROM for the leak scan, default the
@@ -36,6 +36,7 @@ ge_exec bash -c "mkdir -p $B $O $R && rm -f $O/* && \
 rm -f "$BLOCK"; trap - EXIT     # romscan (deploy_check) takes the build lock itself
 cp scripts/rtw/retrowser.template.json $O/retrowser.json
 cp art/cover.png $O/cover.png     # the cartridge picture (manifest "picture", standard 1.2; not passed to the module)
+cp port/web/icon-512.png $O/icon.png   # the game icon (manifest "icon", standard 1.2; the web site's own 512x512 icon)
 node "$RTW_REPO/tools/rtw-hash.ts" "$O" | sed 's/^/rtw-hash: /'
 ROMSCAN_MAP=$B/ge007.map bash scripts/web/deploy_check.sh "$O" | tail -2
 node "$RTW_REPO/tools/rtw-check.ts" "$O" --rom "$RTW_ROM" | sed 's/^/rtw-check: /'
