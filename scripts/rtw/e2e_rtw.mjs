@@ -3,8 +3,11 @@
 //   node scripts/rtw/e2e_rtw.mjs <phase> <build dir> <out dir> [rom]
 //   phase "dev":     host = `npm run dev` (Vite, no service workers): boot to the title and menus, keyboard input,
 //                    audio drained, pointer-lock request, a save stored and handed back after a reload.
-//   phase "offline": host = the built host (dist/, tools/serve-worker.ts): play once, stop every server, reload
-//                    offline, play again from the caches and the remembered ROM.
+//   phase "offline": host = the built host (dist/, tools/serve-worker.ts): play once to the title screen, stop every
+//                    server, reload offline, play again from the caches and the remembered ROM, to the title screen.
+//   <build dir> holds a manifest at its root: build/rtw, or a copy of the repo layout (root retrowser.json pointing
+//   into retrowser/, e.g. `git archive HEAD retrowser.json retrowser | tar -x -C DIR`): the mock serves it as the
+//   default branch, so the host link is the plain owner/repo.
 // Env: RTW_REPO (retrowser checkout, default $HOME/Code/retrowser), CHROME_PATH, RTW_SECS (boot wait, default 70).
 // Screenshots go to <out dir> (local only: game pictures, never commit). Every server and Chrome it starts is
 // stopped by PID at the end. Prints PASS/FAIL lines.
@@ -108,6 +111,12 @@ async function openGame(stored) {
   }
   await page.waitForSelector('[data-state=playing]', { timeout: 180000 });
 }
+// Start through the intro (~20 s of logos, then the gun barrel) to the title / file select; pictures checked by eye
+async function toTitle(tag) {
+  await sleep(Math.max(0, (SECS - 35) * 1000));
+  for (let i = 0; i < 3; i++) { await press('Enter'); await sleep(2500); await shot(`${tag}-start${i}`); }
+  check(`${tag}: Start reached the module`, /pad0 buttons 00001000/.test(await logOf()));
+}
 function dumpLog(name, l) { writeFileSync(join(outDir, name), l); }
 
 try {
@@ -174,6 +183,7 @@ try {
     await openGame(false);
     check('online: boot', await waitLog(/rtw: game started/, 120));
     await sleep(15000); await shot('online');
+    await toTitle('online');
     console.log('stored ROMs on the host: ' + await page.evaluate(async () => {
       const db = await new Promise((ok) => { const r = indexedDB.open('retrowser'); r.onsuccess = () => ok(r.result); });
       const n = await new Promise((ok) => { const r = db.transaction('roms').objectStore('roms').count(); r.onsuccess = () => ok(r.result); r.onerror = () => ok(-1); });
@@ -194,7 +204,7 @@ try {
     check('offline: boot from the caches', await waitLog(/rtw: game started/, 120));
     check('offline: sidecars from the sandbox IndexedDB', /sidecars from IndexedDB/.test(await logOf()));
     await sleep(15000); await shot('offline');
-    await press('Enter'); await sleep(3000); await shot('offline-start');
+    await toTitle('offline');
     { const au = await audio(); check('offline: audio drained into the host AudioWorklet', au.kind === 'worklet' && (au.played ?? 0) > 0, JSON.stringify(au)); }
     check('offline: no request reached the mock', mock.log.length === before);
     dumpLog('log-offline.txt', await logOf());
