@@ -536,6 +536,7 @@ if(EMSCRIPTEN AND GE_RTW)
   list(APPEND SRC_FAST3D "${CMAKE_SOURCE_DIR}/port/rtw/gfx_rtw.cpp")
   set(GE_ENV_LINK -sENVIRONMENT=worker -sMODULARIZE=1 -sEXPORT_NAME=createGoldenEye -sDYNAMIC_EXECUTION=0
     "--js-library=${CMAKE_SOURCE_DIR}/port/rtw/rtw_lib.js"
+    "--pre-js=${CMAKE_SOURCE_DIR}/port/rtw/rtw_net.js"   # online play (standard 1.2): net.js's packet logic in the worker
     -Wl,--wrap=SDL_GL_GetProcAddress -Wl,--wrap=SDL_GL_GetAttribute -Wl,--wrap=SDL_InitSubSystem
     -Wl,--wrap=SDL_SetRelativeMouseMode -Wl,--wrap=SDL_GetRelativeMouseMode
     -Wl,--wrap=SDL_GetRelativeMouseState -Wl,--wrap=SDL_GetMouseState -Wl,--wrap=SDL_GetKeyboardState
@@ -833,7 +834,7 @@ if(EMSCRIPTEN)
     -Wl,--wrap=emscripten_sleep -Wl,--wrap=alCSPGetState
     -Wl,-Map=${CMAKE_BINARY_DIR}/ge007.map)
   if(GE_RTW)
-    set_target_properties(ge007 PROPERTIES LINK_DEPENDS "${CMAKE_SOURCE_DIR}/port/rtw/rtw_lib.js")
+    set_target_properties(ge007 PROPERTIES LINK_DEPENDS "${CMAKE_SOURCE_DIR}/port/rtw/rtw_lib.js;${CMAKE_SOURCE_DIR}/port/rtw/rtw_net.js")
   endif()
 endif()
 message(STATUS "Output binary: ${BIN_NAME}")

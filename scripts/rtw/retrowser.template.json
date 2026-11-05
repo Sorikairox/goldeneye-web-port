@@ -13,7 +13,8 @@
     "wasm": { "path": "ge007.wasm", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 },
     "js": { "path": "ge007.js", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 },
     "data": [
-      { "path": "ge007.romfill", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 }
+      { "path": "ge007.romfill", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 },
+      { "path": "ge007.netregions", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 }
     ]
   },
   "module": { "factory": "createGoldenEye", "loop": "mainloop" },
@@ -51,8 +52,11 @@
     { "id": 12, "label": "No hit flash", "type": "bool", "default": 0 },
     { "id": 14, "label": "Hide crosshair", "type": "bool", "default": 0 },
     { "id": 15, "label": "Show FPS", "type": "bool", "default": 0 },
-    { "id": 8, "label": "All levels unlocked", "type": "bool", "default": 0 }
+    { "id": 8, "label": "All levels unlocked", "type": "bool", "default": 0 },
+    { "id": 17, "label": "Online play", "type": "bool", "default": 1 },
+    { "id": 18, "label": "Online input delay (0 = auto)", "type": "int", "default": 0, "min": 0, "max": 16 }
   ],
+  "net": { "players": 4, "model": "lockstep" },
   "license": "MIT (build code); the game data comes from your ROM",
   "source": "https://github.com/Sorikairox/goldeneye-web-port"
 }

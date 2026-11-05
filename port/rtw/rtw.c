@@ -15,6 +15,12 @@
  * audio or joystick drivers, which need a document. The few SDL calls that would reach them are wrapped
  * (-Wl,--wrap, CMake GE_RTW) at the end of this file.
  *
+ * Online play (retrowser standard 1.2, spec §4.12, manifest "net": { "players": 4, "model": "lockstep" }): the
+ * host owns the room, the WebRTC mesh and the lockstep session boot (every peer from power-on with the room host's
+ * options and save). The game side stays port/src/web/webnet.c (input ring, frame barrier, input delay, state
+ * hashes); the packet logic of the web page's net.js lives in the worker glue port/rtw/rtw_net.js (--pre-js),
+ * which the rtw_net_* exports below feed, and which sends through the env.rtw_net_send / rtw_net_stat imports.
+ *
  * Off (the normal web build) none of this is compiled.
  */
 #include <stddef.h>  /* port/shim/stddef.h: size_t before the Emscripten headers */
@@ -37,8 +43,13 @@ extern int rtw_build_id(void *ptr);
 extern int rtw_rumble(int port, int on);
 extern int rtw_export_file(const char *name, const char *mime, const void *ptr, int len);
 extern int rtw_pointer_lock(int on);
+extern int rtw_net_send(int peer, int channel, const void *ptr, int len);   /* [1.2] a packet to a session peer */
+extern int rtw_net_stat(int peer, int kind);                                /* [1.2] round trips in ms */
 /* JS helpers (rtw_lib.js; not host imports, so not named rtw_*) */
 extern void gertw_boot(void *rom, int len);
+extern void gertw_net_session(int players, int me);                     /* rtw_net.js rtwNet.begin */
+extern void gertw_net_peer(int peer, int state);                        /* rtwNet.peerState */
+extern void gertw_net_recv(int peer, int channel, uint32_t ptr, int len);   /* rtwNet.recv */
 
 /* ---- port functions used here (declared locally: the port headers pull game headers) ------------------ */
 extern int configSetValue(const char *key, double v);
@@ -50,6 +61,8 @@ extern int ge_web_eeprom_load(uint32_t addr, uint32_t len);
 extern uint32_t ge_web_eeprom_image(void);
 extern void ge_web_touch(int on, int buttons, int sx, int sy);
 extern void fileGenerateCRC(uint8_t *from, uint8_t *to, void *saveData);   /* src/game/crc.c: writes chksum1/2 */
+extern int geNetSessionOn;                    /* port/src/web/webnet.c: a lockstep session runs */
+extern void geNetApplySessionConfig(void);    /* webnet.c: the option values every peer of a session must share */
 
 static void rtwLog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void rtwLog(const char *fmt, ...)
@@ -406,7 +419,7 @@ void webPageInit(void) {}
 
 /* ---- options (§4.9): manifest ids -> the port's ini keys (docs/web/RTW.md) ------------------------------ */
 typedef struct { int id; const char *key; int kind; } RtwOpt;   /* kind 0: value as is, 1: bool inverted */
-enum { OPT_RES = 16, OPT_RUMBLE = 10 };
+enum { OPT_RES = 16, OPT_RUMBLE = 10, OPT_ONLINE = 17, OPT_NETDELAY = 18 };   /* 17, 18: online play (rtw_net.js) */
 static const RtwOpt kOpts[] = {
     { 1,  "Video.AspectMode", 0 },         /* 0 fill (Hor+ widescreen), 1 original 4:3, 2 16:9, 3 21:9 */
     { 2,  "Game.SkipIntro", 0 },
@@ -426,8 +439,19 @@ static const RtwOpt kOpts[] = {
 #define RTW_MAX_OPT 32
 static int s_optSet[RTW_MAX_OPT], s_optVal[RTW_MAX_OPT];
 
+/* Online play (standard 1.2): every peer boots with the room host's option values (the host dictates them), so a
+ * session starts from the same configuration everywhere. On top, webnet.c's geNetApplySessionConfig pins what the
+ * web build's sessions pin (OG controls, no all-unlocked, 4:3 projection, no machine-dependent classification):
+ * options 8 (All levels unlocked) and 9 (Control style) are not applied in a session. After the start the options
+ * stay as they are for the whole session (the host's menu may still send rtw_option); only the ones that change
+ * the picture alone (1 aspect of the output rectangle, 7 texture filter, 15 FPS counter, 16 resolution) follow it. */
+static int rtwSessionFixed(int id) { return geNetSessionOn && (id == 8 || id == 9); }
+static int rtwSessionLocal(int id) { return id == 1 || id == 7 || id == 15 || id == 16; }
+
 static void optApply(int id, int value)
 {
+    if (id == OPT_ONLINE || id == OPT_NETDELAY) return;   /* read by rtw_net.js at rtw_net_session (ge_rtw_option) */
+    if (rtwSessionFixed(id)) return;
     if (id == OPT_RES) { s_resOpt = value < 0 ? 0 : value > 2 ? 2 : value; s_resizeDirty = 1; return; }
     if (id == OPT_RUMBLE) {
         s_rumbleOpt = value != 0;
@@ -450,9 +474,19 @@ static void optApply(int id, int value)
 
 EMSCRIPTEN_KEEPALIVE int rtw_option(int id, int value)
 {
+    if (s_started && geNetSessionOn && !rtwSessionLocal(id)) {
+        rtwLog("rtw: option %d = %d ignored: an online session keeps the room host's options", id, value);
+        return 0;
+    }
     if (id >= 0 && id < RTW_MAX_OPT) { s_optSet[id] = 1; s_optVal[id] = value; }
     if (s_bootReady) optApply(id, value);   /* before that: applied by ge_rtw_before_main */
     return 0;
+}
+
+/* the value the host gave option id (rtw_net.js reads 17 / 18 at rtw_net_session), or def when it sent none */
+EMSCRIPTEN_KEEPALIVE int ge_rtw_option(int id, int def)
+{
+    return id >= 0 && id < RTW_MAX_OPT && s_optSet[id] ? s_optVal[id] : def;
 }
 
 /* ---- start (§4.3 step 6) ----------------------------------------------------------------------------- */
@@ -493,10 +527,11 @@ EMSCRIPTEN_KEEPALIVE void ge_rtw_after_main(void)
     s_started = 1;
     /* the boot's video / input defaults ran (D546 migrations, low-end check): the host's options win */
     for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id]) optApply(id, s_optVal[id]);
-    for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id] && id != OPT_RES && id != OPT_RUMBLE) {
+    for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id] && id != OPT_RES && id != OPT_RUMBLE && !rtwSessionFixed(id)) {
         for (size_t i = 0; i < sizeof(kOpts) / sizeof(kOpts[0]); i++)
             if (kOpts[i].id == id) videoRequestLiveConfigForKey(kOpts[i].key);
     }
+    if (geNetSessionOn) geNetApplySessionConfig();   /* online: the session's fixed values stand after the boot's defaults */
     /* Click-to-lock is the host's job (it captures on a click after rtw_pointer_lock(1)): arm the port's grab
      * so it asks for the pointer whenever a stage is running. */
     inputNotifyClick();
@@ -647,6 +682,7 @@ void __real_osContGetReadData(RtwContPad *pad);
 void __wrap_osContGetReadData(RtwContPad *pad)
 {
     __real_osContGetReadData(pad);
+    if (geNetSessionOn) return;   /* online: every controller comes from the session's input ring */
     for (int i = 1; i < RTW_MAXCONTROLLERS; i++) {
         unsigned b; int sx, sy;
         if (!pad || !geRtwPad(i, &b, &sx, &sy)) continue;
@@ -658,6 +694,7 @@ void __wrap_osContGetReadData(RtwContPad *pad)
 }
 static void rtwStatus(RtwContStatus *st)
 {
+    if (geNetSessionOn) return;   /* online: presence = the session's mask (libultra.c) */
     for (int i = 1; i < RTW_MAXCONTROLLERS; i++) {
         unsigned b; int sx, sy;
         if (!st || !geRtwPad(i, &b, &sx, &sy)) continue;
@@ -680,7 +717,7 @@ int32_t __real_osContInit(void *mq, uint8_t *bitpattern, RtwContStatus *data);
 int32_t __wrap_osContInit(void *mq, uint8_t *bitpattern, RtwContStatus *data)
 {
     int32_t r = __real_osContInit(mq, bitpattern, data);
-    if (bitpattern) *bitpattern |= rtwMask();
+    if (bitpattern && !geNetSessionOn) *bitpattern |= rtwMask();
     return r;
 }
 
@@ -728,3 +765,31 @@ static void rtwConfigReplay(void)
     }
     s_nreg = 0;
 }
+
+/* ---- online play (standard 1.2, spec §4.12) ---------------------------------------------------------------- */
+/* The host's lockstep boot calls rtw_net_session + rtw_net_peer after rtw_option and before rtw_start; the glue
+ * (rtw_net.js) picks the input delay and starts webnet.c's session right before main() (gertwBootAsync), so the
+ * game is in the session from its first retrace. Packets arrive between the module's own steps: the host asks for a
+ * buffer (at most 64 KiB, channel 1's limit), copies the packet in and calls rtw_net_recv; the glue copies it out at
+ * once (it never runs the game from inside the call: an Asyncify fiber switch must not unwind through it). Sends
+ * go through ge_rtw_net_send from a static buffer (no malloc during a session), so both host imports are real
+ * env.rtw_* imports of the wasm. Everything here is port-only state (scripts/web/netregions.py leaves it out of
+ * the state hash). */
+#define RTW_NET_MAX 65536
+static uint8_t s_netRx[RTW_NET_MAX], s_netTx[RTW_NET_MAX];
+EMSCRIPTEN_KEEPALIVE int rtw_net_session(int players, int me) { gertw_net_session(players, me); return 0; }
+EMSCRIPTEN_KEEPALIVE int rtw_net_peer(int peer, int state) { gertw_net_peer(peer, state); return 0; }
+EMSCRIPTEN_KEEPALIVE void *rtw_net_buffer(int size) { return size >= 0 && size <= RTW_NET_MAX ? s_netRx : NULL; }
+EMSCRIPTEN_KEEPALIVE int rtw_net_recv(int peer, int channel, int len)
+{
+    if (len < 0 || len > RTW_NET_MAX) return 0;
+    gertw_net_recv(peer, channel, (uint32_t)(uintptr_t)s_netRx, len);
+    return 0;
+}
+EMSCRIPTEN_KEEPALIVE uint32_t ge_rtw_net_txbuf(void) { return (uint32_t)(uintptr_t)s_netTx; }
+EMSCRIPTEN_KEEPALIVE int ge_rtw_net_send(int peer, int channel, int len)
+{
+    if (len < 0 || len > RTW_NET_MAX) return -1;
+    return rtw_net_send(peer, channel, s_netTx, len);
+}
+EMSCRIPTEN_KEEPALIVE int ge_rtw_net_stat(int peer, int kind) { return rtw_net_stat(peer, kind); }

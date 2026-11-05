@@ -21,6 +21,20 @@ addToLibrary({
     (Module.rtw && Module.rtw.rtw_export_file ? Module.rtw.rtw_export_file(Number(name), Number(mime), Number(p), n) : -1),
   rtw_pointer_lock__sig: 'ii',
   rtw_pointer_lock: (on) => (Module.rtw && Module.rtw.rtw_pointer_lock ? Module.rtw.rtw_pointer_lock(on) : 0),
+  // [1.2] online play (spec §4.12): a packet to a session peer (-2 = no session: a host without online play) and the
+  // round trips (-1 = unknown). Called from rtw.c ge_rtw_net_send / ge_rtw_net_stat, so both are env imports of the wasm.
+  rtw_net_send__sig: 'iiipi',
+  rtw_net_send: (peer, ch, p, n) =>
+    (Module.rtw && Module.rtw.rtw_net_send ? Module.rtw.rtw_net_send(peer, ch, Number(p), n) : -2),
+  rtw_net_stat__sig: 'iii',
+  rtw_net_stat: (peer, kind) => (Module.rtw && Module.rtw.rtw_net_stat ? Module.rtw.rtw_net_stat(peer, kind) : -1),
+  // rtw.c rtw_net_session / rtw_net_peer / rtw_net_recv -> port/rtw/rtw_net.js (--pre-js)
+  gertw_net_session__sig: 'vii',
+  gertw_net_session: (players, me) => rtwNet.begin(players, me),
+  gertw_net_peer__sig: 'vii',
+  gertw_net_peer: (peer, state) => rtwNet.peerState(peer, state),
+  gertw_net_recv__sig: 'viiii',
+  gertw_net_recv: (peer, ch, p, n) => rtwNet.recv(peer, ch, p >>> 0, n),
 
   // ---- WebGL2 on the OffscreenCanvas ---------------------------------------------------------------
   gertw_gl_create__deps: ['$GL'],
@@ -133,11 +147,13 @@ addToLibrary({
     }
     M._ge_rtw_rom_free();
 
+    rtwNet.beforeMain();   // online play: webnet.c's session (ring, input delay, hashed ranges) before the first retrace
     M._ge_rtw_before_main();
     FS.chdir('/');
     log(`calling main() after ${(performance.now() - t0).toFixed(0)} ms`);
     try { M.callMain([]); } catch (e) { if (e !== 'unwind') throw e; }
     M._ge_rtw_after_main();
+    rtwNet.startTransport();
   },
   gertw_boot__deps: ['$gertwBootAsync'],
   gertw_boot__sig: 'vpi',

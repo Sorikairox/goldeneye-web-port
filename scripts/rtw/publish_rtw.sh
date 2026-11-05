@@ -2,7 +2,7 @@
 # Refresh the retrowser.app build that lives on this branch (docs/web/RTW.md, "Published output"):
 #   retrowser.json          repo root: the manifest retrowser.app reads from the default branch, so the plain link
 #                           Sorikairox/goldeneye-web-port works; its file paths point into retrowser/
-#   retrowser/ge007.{js,wasm,romfill}   the built files (same bytes as build/rtw)
+#   retrowser/ge007.{js,wasm,romfill,netregions}   the built files (same bytes as build/rtw)
 # and, with --dist, the local orphan branch rtw-dist (manifest + files at its root, link form owner/repo@rtw-dist).
 #
 #   scripts/rtw/publish_rtw.sh [--no-build] [--dist]
@@ -28,7 +28,7 @@ rtw() {   # rtw hash|check ARGS...
   else local c=$1; shift; node "$RTW_REPO/tools/rtw-$c.ts" "$@"; fi
 }
 [ $BUILD = 1 ] && bash scripts/rtw/build_rtw.sh
-B=build/rtw; O=retrowser; FILES="ge007.js ge007.wasm ge007.romfill"
+B=build/rtw; O=retrowser; FILES="ge007.js ge007.wasm ge007.romfill ge007.netregions"
 for f in $FILES retrowser.json; do [ -s "$B/$f" ] || { echo "publish_rtw: $B/$f missing (build first)" >&2; exit 1; }; done
 
 # romfill = offsets only: u32 magic 'GERF', version, count, crc_fill, crc_syms, nsyms; nsyms x 8 B; count x 20 B
