@@ -12,9 +12,14 @@
 // too), DESYNC=1 (at the end: flip one byte of N64 DRAM on player 2 -> both report it), LEAVE=1 (then player 1 leaves
 // the session: its game restarts alone), SOLO=1 (afterwards: a fresh page plays alone), RTW_OPTIONS_HOST (stored
 // options of player 1, default {"2":1}: skip intro) and RTW_OPTIONS_GUEST (of the others, default {"2":0}: the
-// session must use player 1's).
+// session must use player 1's), RTW_OWN_HOST / RTW_OWN_GUEST (the players' own settings, not in the manifest, set in
+// their game's settings record before the session, e.g. {"7":1,"13":100}; checked: each peer keeps its own in the
+// session), LEVEL=1 (the room host walks the menus into the first mission before the inputs: display lists, HUD and
+// crosshair in play), OVERLAY=1 (player 2 opens the options overlay in the session: the room host's rows are locked,
+// an own one changes; hashes compared after), GUEST_LEAVE=1 (then player 2 leaves: its own values of the room host's
+// options are back, its stored host options untouched).
 // Prints PASS / FAIL lines and "ALL PASS" at the end; exit code 0 only then. Logs (no pictures) go to <out dir>.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -109,6 +114,23 @@ async function compareHashes(list, label) {
     sts.map((s, i) => `P${list[i].n} matched ${s ? s.hashesMatched : '?'} to ${s ? s.hashChecked : '?'}, desync ${s && s.desync ? s.desync.frame : 'none'}`).join(', '));
   return { same, differ };
 }
+// the game's current_menu (bondconstants.h MENU: 5 file select .. 10 briefing, 11 run stage), from this build's netregions
+const NETREG = [join(buildDir, 'ge007.netregions'), join(buildDir, 'retrowser/ge007.netregions')].find((f) => existsSync(f));
+const MENU_ADDR = NETREG ? parseInt((readFileSync(NETREG, 'utf8').match(/^S ([0-9a-f]+) 4 current_menu$/m) || [])[1] || '0', 16) : 0;
+const menuOf = (p) => inWorker(p, (a) => { const h = globalThis.__rtwGoldenEye.Module.HEAPU8; return new DataView(h.buffer).getInt32(a, true); }, MENU_ADDR);
+const optsNow = (p, ids) => inWorker(p, (l) => Object.fromEntries(l.map((i) => [i, globalThis.__rtwGoldenEye.optionNow(i)])), ids);
+const press1 = async (p, key, ms = 120) => { await p.page.keyboard.down(key); await p.page.waitForTimeout(ms); await p.page.keyboard.up(key); };
+async function toLevel(A) {   // the room host (controller 1) presses A (Start on the briefing) until the mission runs
+  const seen = [];
+  for (let t = Date.now(); Date.now() - t < 150000;) {
+    const m = await menuOf(A);
+    if (seen[seen.length - 1] !== m) { seen.push(m); say(`menu ${m}`); }
+    if (m === 11) return seen;
+    await press1(A, m === 10 ? 'Enter' : 'KeyX');
+    await new Promise((r) => setTimeout(r, 900));
+  }
+  throw new Error(`no mission after 150 s (menus ${seen.join(' ')})`);
+}
 const KEYS = ['Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyX', 'KeyC', 'KeyZ', 'KeyA'];
 async function playInputs(list, target) {   // random presses on every page until each ran `target` retraces
   let i = 0, best = -1, bestAt = Date.now();
@@ -136,6 +158,15 @@ try {
   const hostOpts = process.env.RTW_OPTIONS_HOST || '{"2":1}', guestOpts = process.env.RTW_OPTIONS_GUEST || '{"2":0}';
   for (let n = 1; n <= PLAYERS; n++) await newPlayer(n, n === 1 ? hostOpts : guestOpts);
   for (const p of players) { await open(p); say(`P${p.n} plays alone`); }
+  const ownHost = JSON.parse(process.env.RTW_OWN_HOST || '{}'), ownGuest = JSON.parse(process.env.RTW_OWN_GUEST || '{}');
+  const hostDict = Object.keys(JSON.parse(hostOpts)).map(Number).filter((i) => i !== 2);   // room-host options under test
+  for (const p of players) {
+    const own = p.n === 1 ? ownHost : ownGuest;
+    for (const [id, v] of Object.entries(own)) await inWorker(p, ([i, x]) => globalThis.__rtwGoldenEye.setOwn(i, x), [+id, v]);
+  }
+  const ownIds = [...new Set([...Object.keys(ownHost), ...Object.keys(ownGuest)].map(Number))];
+  const alone = await Promise.all(players.map((p) => optsNow(p, [...hostDict, ...ownIds])));
+  say('alone: ' + alone.map((o, i) => `P${i + 1} ${JSON.stringify(o)}`).join(' '));
   check((await Promise.all(players.map(net))).every((s) => s && !s.active), 'before the session nobody is in one');
   const A = players[0];
   await A.page.click('[data-action=online]');
@@ -163,13 +194,41 @@ try {
   const opts = await Promise.all(players.map((p) => inWorker(p, () => globalThis.__rtwGoldenEye.option(2))));
   check(opts.every((o) => o === 1), `every player boots with the room host's options (skip intro: ${opts.join(' ')})`);
   check(sts.every((s) => s.beganAt === 0), `the session is set before the first retrace (lockstep boot): ${sts.map((s) => s.beganAt).join(' ')}`);
-  const fs = await playInputs(players, FRAMES);
+  if (hostDict.length || ownIds.length) {
+    const inS = await Promise.all(players.map((p) => optsNow(p, [...hostDict, ...ownIds])));
+    say('in the session: ' + inS.map((o, i) => `P${i + 1} ${JSON.stringify(o)}`).join(' '));
+    const hv = JSON.parse(hostOpts);
+    check(inS.every((o) => o && hostDict.every((i) => o[i] === hv[i])), `every peer uses the room host's view options ${JSON.stringify(hostDict)}`);
+    check(inS.every((o, k) => o && ownIds.every((i) => o[i] === alone[k][i])), `every peer keeps its own settings ${JSON.stringify(ownIds)}`);
+  }
+  let base = 0;
+  if (process.env.LEVEL === '1') {
+    if (!MENU_ADDR) throw new Error('current_menu not found in ge007.netregions');
+    const seen = await toLevel(A);
+    base = Math.max(...(await Promise.all(players.map(frameOf))));
+    check(true, `the room host walked into the mission (menus ${seen.join(' ')}) at retrace ${base}`);
+    const ms = await Promise.all(players.map(menuOf));
+    check(ms.every((m) => m === 11), `every peer runs the mission: ${ms.join(' ')}`);
+    {   // where the display lists are (left out of the hash): N64 DRAM offsets
+      const sym = (n) => parseInt((readFileSync(NETREG, 'utf8').match(new RegExp(`^S ([0-9a-f]+) [0-9a-f]+ ${n}$`, 'm')) || [])[1] || '0', 16);
+      const pools = await inWorker(A, ([g, v]) => { const d = new DataView(globalThis.__rtwGoldenEye.Module.HEAPU8.buffer); const r = (a) => [0, 8, 16].map((o) => (d.getUint32(a + o, true) - 0x12000000).toString(16)); return { gfx: r(g), vtx: r(v) }; }, [sym('g_GfxBuffers'), sym('g_VtxBuffers')]);
+      say(`display-list pools (DRAM offsets): ${JSON.stringify(pools)}`);
+    }
+    // the room host aims (R: the crosshair is drawn) and fires for a while; pictures of both screens (local only)
+    await A.page.waitForTimeout(3000);
+    await A.page.keyboard.down('KeyS');
+    for (let i = 0; i < 12; i++) { await press1(A, i % 3 ? 'ArrowLeft' : 'KeyZ', 150); await A.page.waitForTimeout(200); }
+    for (const p of players) await p.page.locator('[data-field=screen]').screenshot({ path: join(out, `aim_p${p.n}.png`) }).catch(() => {});
+    await A.page.keyboard.up('KeyS');
+    base = Math.max(...(await Promise.all(players.map(frameOf))));
+  }
+  const fs = await playInputs(players, base + FRAMES);
   say(`played to retraces ${fs.join(' ')}`);
   await new Promise((r) => setTimeout(r, 1500));
   await compareHashes(players, `${PLAYERS} players after ${FRAMES} retraces with inputs`);
   // the remote inputs that arrived = what the sender sampled (ring of player 2's channel on player 1 vs on player 2)
   {
-    const B = players[1], lo = Math.max(10, FRAMES - 200), hi = FRAMES - 10;
+    const B = players[1], lo = Math.max(10, Math.min(...fs) - 200), hi = Math.min(...fs) - 10;
     const [ra, rb] = await Promise.all([inWorker(A, ([a, b]) => globalThis.__rtwGoldenEye.ring(1, a, b), [lo, hi]), inWorker(B, ([a, b]) => globalThis.__rtwGoldenEye.ring(1, a, b), [lo, hi])]);
     const both = ra && rb ? ra.filter((v, i) => v !== -1 && v === rb[i]).length : 0, pressed = rb ? rb.filter((v) => v > 0).length : 0;
     check(both > 50 && pressed > 0, `player 2's inputs on player 1 = player 2's own: ${both} of ${hi - lo + 1} ring frames still kept equal, ${pressed} with buttons / stick`);
@@ -178,6 +237,53 @@ try {
   say('stats: ' + st2.map((s) => `P${s.me + 1} sent ${s.sent} recv ${s.recv} refused ${s.refused} bad ${s.bad} waits ${s.waits} (${s.waitMs} ms) slowed ${s.slowedMs} ms kicks ${s.kicks} errors ${s.errors}`).join('; '));
   check(st2.every((s) => s.bad === 0 && s.refused === 0 && s.errors === 0), 'no bad or refused packets, no glue errors');
   writeFileSync(join(out, 'net_status.json'), JSON.stringify(st2, null, 1));
+
+  if (process.env.OVERLAY === '1') {   // player 2: the overlay is open; try the room host's FOV, change an own setting
+    const B = players[1];
+    const before = await optsNow(B, [5, 6, 12, 13, 14]);
+    await press1(B, 'Digit4'); await B.page.waitForTimeout(800);
+    const lg0 = await hostLog(B);
+    check(/options overlay: online session/.test(lg0) && /optionsoverlay: opened/.test(lg0), 'player 2 opened the options overlay during the session');
+    await B.page.locator('[data-field=screen]').screenshot({ path: join(out, 'overlay_root_p2.png') }).catch(() => {});
+    // session root list: Video, Mouse, Controller, Game (Audio / Key bindings hidden); Game page: Field of view (locked),
+    // No hit flash (locked), Show crosshair, HUD scale (own), Skip intro, All unlocked (locked), Back
+    const nav = (process.env.OVERLAY_KEYS || 'ArrowDown,ArrowDown,ArrowDown,KeyX,ArrowRight,ArrowRight,ArrowDown,KeyX,ArrowDown,ArrowDown,ArrowLeft,ArrowLeft,ArrowLeft').split(',');
+    for (const [i, k] of nav.entries()) {
+      await press1(B, k); await B.page.waitForTimeout(300);
+      if (i === 5) await B.page.locator('[data-field=screen]').screenshot({ path: join(out, 'overlay_fov_p2.png') }).catch(() => {});   // the lock reason
+    }
+    await B.page.locator('[data-field=screen]').screenshot({ path: join(out, 'overlay_game_p2.png') }).catch(() => {});
+    const after = await optsNow(B, [5, 6, 12, 13, 14]);
+    const lg = await hostLog(B);
+    writeFileSync(join(out, 'overlay_log_p2.txt'), lg + '\n');
+    say(`player 2 overlay: before ${JSON.stringify(before)} after ${JSON.stringify(after)}`);
+    check(after[5] === before[5] && after[6] === before[6] && after[12] === before[12] && !/is the room host's during online play/.test(lg),
+      `the room host's FOV / draw distance / no hit flash stay locked in the overlay (${after[5]} / ${after[6]} / ${after[12]})`);
+    const ownChanged = [13, 14].filter((i) => after[i] !== before[i]);
+    const rec = await inWorker(B, () => globalThis.__rtwGoldenEye.settings());
+    check(ownChanged.length > 0 && ownChanged.every((i) => rec[i] === after[i]), `an own setting changed in the session and went into the record: ${ownChanged.map((i) => `${i}=${after[i]}`).join(' ')} ${JSON.stringify(rec)}`);
+    for (let i = 0; i < 4 && (await inWorker(B, () => 1)) && /optionsoverlay: opened/.test((await hostLog(B)).split('optionsoverlay: closed').pop()); i++) await press1(B, 'KeyC');
+    const f0 = Math.max(...(await Promise.all(players.map(frameOf))));
+    await playInputs(players, f0 + 300);
+    await new Promise((r) => setTimeout(r, 1500));
+    await compareHashes(players, 'after the overlay was used on player 2');
+  }
+
+  if (process.env.GUEST_LEAVE === '1') {   // player 2 leaves: its own values of the room host's options come back
+    const B = players[1];
+    const storedBefore = await B.page.evaluate(() => localStorage.getItem('rtw:options:goldeneye-eu'));
+    await B.page.click('[data-action=online]');
+    await B.page.click('[data-action=net-leave]');
+    await until('player 2 alone again', async () => { const s = await net(B); return s && !s.active && (await hostFrames(B)) > 100; }, 90000);
+    await B.page.waitForTimeout(5000);   // past main(): the options of this start are applied
+    const o = await optsNow(B, [...hostDict, ...ownIds]);
+    const storedAfter = await B.page.evaluate(() => localStorage.getItem('rtw:options:goldeneye-eu'));
+    const rec = await inWorker(B, () => globalThis.__rtwGoldenEye.settings());
+    check(hostDict.every((i) => o[i] === alone[1][i]) && ownIds.every((i) => o[i] === (rec[i] ?? alone[1][i])),
+      `after leaving, player 2 has its own values again: ${JSON.stringify(o)} (alone before: ${JSON.stringify(alone[1])})`);
+    check(storedAfter === storedBefore, `player 2's stored host options untouched by the session: ${storedAfter}`);
+    players.splice(1, 1);   // no further comparisons with player 2
+  }
 
   if (process.env.DROP === '1') {
     const gone = players[PLAYERS - 1], rest = players.slice(0, -1);

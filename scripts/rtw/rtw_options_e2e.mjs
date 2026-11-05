@@ -1,7 +1,9 @@
 // In-game options of the retrowser.app build (standard 1.2 "inGame" options, docs/web/RTW.md "Options") end to end:
 // one page in a muted headless Chrome against the retrowser host's built dist (in-process). The extra button Options
 // (key 4) opens the port's options overlay; the pad (arrows = stick, X = A, C = B) changes settings in it; every change
-// of a mapped setting reaches the host (env.rtw_option_changed), which keeps it; after a reload the game starts with it.
+// of a room-host setting (manifest inGame) reaches the host (env.rtw_option_changed), which keeps it; a change of the
+// player's own setting (not in the manifest) goes into the game's settings record (worker IndexedDB) instead; after a
+// reload the game starts with both.
 //   node scripts/rtw/rtw_options_e2e.mjs <build dir> <out dir> [rom]
 // Env: RTW_REPO, RTW_HOST_DIST, CHROME_PATH, PORT (default 8797), STEPS (overlay key sequence, default below).
 // Screenshots go to <out dir> (local only: game pictures, never commit). Prints PASS / FAIL and "ALL PASS".
@@ -79,19 +81,26 @@ try {
   await shot('overlay-changed');
   if (await page.$('.play .error')) throw new Error('the game stopped with an error');
   await sleep(500);
-  const changed = [...(await log()).matchAll(/rtw: option (\d+) = (-?\d+) changed in the game \(([^)]+)\)/g)].map((m) => ({ id: +m[1], v: +m[2], key: m[3] }));
-  say(`changed in the game: ${changed.map((c) => `${c.id}=${c.v} (${c.key})`).join(', ') || 'none'}`);
+  const changed = [...(await log()).matchAll(/rtw: option (\d+) = (-?\d+) changed in the game \(([^)]+)\), (told to the host|kept in this player's settings)/g)]
+    .map((m) => ({ id: +m[1], v: +m[2], key: m[3], own: m[4] !== 'told to the host' }));
+  say(`changed in the game: ${changed.map((c) => `${c.id}=${c.v} (${c.key}${c.own ? ', own' : ''})`).join(', ') || 'none'}`);
   const st = await stored();
-  say(`host stored: ${JSON.stringify(st)}`);
-  const last = {};
-  for (const c of changed) last[c.id] = c.v;
-  check(changed.length > 0 && Object.entries(last).every(([id, v]) => st[id] === v), 'every change reached the host and is stored');
+  const rec = await inWorker(() => globalThis.__rtwGoldenEye.settings());
+  say(`host stored: ${JSON.stringify(st)}; this player's settings record: ${JSON.stringify(rec)}`);
+  const last = {}, lastOwn = {};
+  for (const c of changed) (c.own ? lastOwn : last)[c.id] = c.v;
+  const OWN = [1, 7, 13, 14, 15, 19];   // not in the manifest: kept by the game (rtw.c rtwOwnOption)
+  check(Object.keys(last).length > 0 && Object.entries(last).every(([id, v]) => st[id] === v && !OWN.includes(+id)),
+    `every change of a room-host option reached the host and is stored: ${JSON.stringify(last)}`);
+  check(Object.keys(lastOwn).length > 0 && Object.entries(lastOwn).every(([id, v]) => rec && rec[id] === v && st[id] === undefined && OWN.includes(+id)),
+    `every change of an own setting is in the game's settings record, not the host's: ${JSON.stringify(lastOwn)}`);
+  Object.assign(last, lastOwn);
   for (let i = 0; i < 4 && /optionsoverlay: opened/.test((await log()).split('optionsoverlay: closed').pop()); i++) await press('C');
   check(/optionsoverlay: closed/.test(await log()), 'B closes the overlay');
   await open(true);
   await sleep(3000);
   const back = {};
-  for (const id of Object.keys(last)) back[id] = await inWorker((i) => globalThis.__rtwGoldenEye.option(+i), id);
+  for (const id of Object.keys(last)) back[id] = await inWorker((i) => globalThis.__rtwGoldenEye.optionNow(+i), id);
   check(Object.entries(last).every(([id, v]) => back[id] === v), `after a reload the game starts with them: ${JSON.stringify(back)}`);
   writeFileSync(join(out, 'host_log.txt'), await log());
 } catch (e) {
