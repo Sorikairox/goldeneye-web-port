@@ -197,10 +197,10 @@ keeps those settings across starts.
   Enter, B = Backspace: back / close from the top page, Start closes); buttons still held when it closes are held back
   from the game until released. `geRtwPump` (once per frame, gfx_rtw.cpp `handle_events`) polls every mapped key and calls
   `rtw_option_changed` on a change (rounded, clamped to the manifest range; host values are not echoed).
-- **Fixed on the way**: "N64 3-point" texture filter (option 7 = 2) stopped the game: fast3d's fragment shader calls
-  `mix(vec4, vec4, int)`, which GLSL ES 3.00 lacks. rtw only: the wrapped `SDL_GL_GetProcAddress` hands out a
-  `glShaderSource` that rewrites it to `float(...)`. **The site has the same latent bug** (gfx_opengl.cpp), not fixed there
-  (byte-identical rule).
+- **Fixed on the way**: "N64 3-point" texture filter (option 7 = 2) stopped the game: fast3d's fragment shader called
+  `mix(vec4, vec4, int)`, which GLSL ES 3.00 lacks. G14 worked around it in the rtw build only (a wrapped
+  `glShaderSource` rewrote the call); since G15 the source itself uses `float(three_point_filter)` (gfx_opengl.cpp, web,
+  rtw and native alike) and the wrapper is gone (`__wrap_SDL_GL_GetProcAddress` returns the WebGL entry point as is).
 - **Test**: `scripts/rtw/rtw_options_e2e.mjs <build dir> <out> [rom]`.
 
 ## What does not fit v1 (host would need)

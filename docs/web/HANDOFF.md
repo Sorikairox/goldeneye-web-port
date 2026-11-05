@@ -3,7 +3,11 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 .. G14, 2026-11-05)
+## Current state (after G3 .. G15, 2026-11-05)
+
+G15: **"N64 3-point" texture filter no longer stops the site** (section "N64 3-point filter (G15)" below): the fragment
+shader's two `mix(..., three_point_filter)` calls take `float(three_point_filter)`; the rtw-only shader rewrite is gone.
+Built and tested, **not deployed** (the user deploys).
 
 G14: **retrowser build plays online and follows the 1.2 options rule** (section "retrowser online play and start-up
 options (G14)" below): standard 1.2 lockstep for 2-4 players through the host (rtw build only), and the host's menu
@@ -70,6 +74,37 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
 
+## N64 3-point filter (G15, 2026-11-05)
+
+- **Bug**: `Video.TextureFilter` = 2 ("3-point" in F10 > Video > Texture filter, and also what the Display mode preset
+  "Original N64" sets) makes fast3d generate `hookTexture2D(..., in int three_point_filter)` returning
+  `mix(SAMPLE_TEX(...), filter3point(...), three_point_filter)` (plain and blur variants, gfx_opengl.cpp ~450 / ~461).
+  GLSL ES 3.00 has no `mix(vec4, vec4, int)` and no implicit int -> float, so WebGL refused the shader and
+  `gfx_opengl_create_and_load_new_shader` called sysFatalError: the game aborted.
+- **Repro on the deployed build** (build-web/site = live: wasm 18e4d479, sw-build d903878e5228234a): Dam warp, F10 at 9 s,
+  Enter (Video), Right on Display mode at 13 s: `video: applied Original N64 preset` at 13.13 s, then `ERROR: 0:28: 'mix' :
+  no matching overloaded function found`, `[FATAL] Fragment shader compilation failed`, `Aborted()` from
+  sysFatalError (port_work/g15/repro_console_before.log).
+- **Fix (51e8bbd2)**: both calls use `float(three_point_filter)` (the uniform is 0 or 1; desktop GLSL accepted the int only
+  by implicit conversion, `float()` is valid in every version). The rtw build's `rtwShaderSource` wrapper (71875c00) no
+  longer matched anything and is removed; `__wrap_SDL_GL_GetProcAddress` is back to its pre-G14 form.
+- **Tests** (port_work/g15/): the same F10 route on the new build: preset applied at 15.1 s, no shader error, Dam plays
+  on in 4:3 with 3-point. All four filters (0 Nearest, 1 Bilinear, 2 3-point, 3 Trilinear), config seeded through the
+  page's pending-save copy (localStorage `ge007-pending-<sha1>` = `{ini: "[Video]\nTextureFilter = N"}`, checked by reading
+  /data/ge007.ini in the page): Dam warp 24 s with walk/fire, and the real menu route with GE_MPVIRT=3 (title, file
+  select, mode select -> Multiplayer, MP options, Temple 4P match, the in-match MP menu) 64 s: 0 shader failures, 0 FATAL,
+  0 exceptions, 0 WebGL warnings, `gl.getError()` empty at the end; screenshots checked. (The ms-timed pad route runs ~4 s
+  early with Nearest, which boots faster on SwiftShader: there the route needs `20000:START;24000:A` before the stick.)
+  save_test all PASS; e2e_replay (75 s recording: 70/70 identical, mutation first differs at 2950); netpair 2P 120 s
+  through the chrome lock: 3236/3236 retraces identical, 0 DESYNC; offline_test PASS (boot from caches, sidecars from
+  IndexedDB); deploy_check OK, romscan 4 runs / 280 B (allowlisted). Native aarch64 reference build (native_ref.sh)
+  compiles, GLSL 130, runs Dam with TextureFilter = 2 (25/25 shaders warmed, no error).
+- **rtw**: publish_rtw.sh --dist: rtw check --rom OK (root build id b9a1d426..., build/rtw 8bbc85ca...), rtw-dist 85a22e9c;
+  rtw_options_e2e ALL PASS (its default steps choose Original N64 = option 7 = 2, kept after a reload), e2e_rtw offline
+  PASS (repo-layout copy).
+- **Site build** (built at 51e8bbd2): wasm 61718646..., js e45e2488... (unchanged), romfill d09588da...; build-web/site
+  sw-build 25f5feeb4238841a (deploy_web.sh re-hashes with its BUILD.txt, so the live id differs; see the session report).
+
 ## retrowser online play and start-up options (G14, 2026-11-05)
 
 Details: `docs/web/RTW.md` sections "Online play (standard 1.2, G14)" and "Options (standard 1.2 ...)".
@@ -86,8 +121,8 @@ Details: `docs/web/RTW.md` sections "Online play (standard 1.2, G14)" and "Optio
   Online play, 18 Online input delay; inGame 1, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 19 Vibration %; dropped 10
   Rumble (bool, replaced by 19). Overlay opened by extra button 19 Options, driven by host pad 0 through the wrapped
   keyboard state; `geRtwPump` reports every change with `rtw_option_changed`. Found + fixed (rtw only): "N64 3-point"
-  texture filter aborted the game (GLSL ES `mix(vec4, vec4, int)`); a wrapped `glShaderSource` casts to float. **The
-  site has that latent bug too** (choose N64 3-point in F10 -> fatal shader error); fix it when the site may change.
+  texture filter aborted the game (GLSL ES `mix(vec4, vec4, int)`); a wrapped `glShaderSource` casts to float. The site
+  had that latent bug too; G15 fixed it at the source and removed the wrapper (section "N64 3-point filter (G15)").
 - 3dbf47cd root build (publish_rtw.sh --dist; rtw-dist 8848c8ff), `rtw.mjs check . --rom ~/roms/...` OK (build id
   7c06fc68).
 - **Tests** (muted headless Chrome through the shared chrome lock; retrowser dist d7782274 copied to the scratchpad;
