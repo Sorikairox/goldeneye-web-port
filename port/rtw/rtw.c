@@ -663,40 +663,10 @@ void geRtwShotWritten(const char *ppmPath)
 /* ---- SDL calls that would need SDL's Emscripten video / audio / joystick drivers (-Wl,--wrap) ----------- */
 /* GL entry points come from Emscripten's WebGL2 context (gfx_rtw.cpp made it current); the profile is
  * reported as ES like SDL's Emscripten context, so gfx_opengl.cpp takes the same paths as the web build. */
-/* glShaderSource goes through rtwShaderSource: fast3d's fragment shader for the N64 3-point texture filter calls
- * mix(vec4, vec4, int), which GLSL ES 3.00 has no overload for, so choosing "N64 3-point" (option 7 = 2, now reachable
- * in the options overlay) stopped the game with a shader compile error. The int becomes float(...) here; nothing
- * else in the source changes. (The web site has the same latent bug in gfx_opengl.cpp; it stays as it is there, the
- * site build must stay byte-identical.) */
-typedef void (*RtwShaderSourceFn)(unsigned shader, int count, const char *const *str, const int *len);
-static RtwShaderSourceFn s_realShaderSource;
-static void rtwShaderSource(unsigned shader, int count, const char *const *str, const int *len)
-{
-    static const char kNeedle[] = "texSize), three_point_filter);";
-    static const char kFixed[] = "texSize), float(three_point_filter));";
-    size_t total = 0;
-    for (int i = 0; i < count; i++) total += len && len[i] >= 0 ? (size_t)len[i] : strlen(str[i]);
-    char *src = (char *)malloc(total * 2 + 64), *o = src;
-    if (!src) { s_realShaderSource(shader, count, str, len); return; }
-    for (int i = 0; i < count; i++) {
-        const size_t n = len && len[i] >= 0 ? (size_t)len[i] : strlen(str[i]);
-        for (size_t k = 0; k < n;) {
-            if (n - k >= sizeof(kNeedle) - 1 && !memcmp(str[i] + k, kNeedle, sizeof(kNeedle) - 1)) {
-                memcpy(o, kFixed, sizeof(kFixed) - 1); o += sizeof(kFixed) - 1; k += sizeof(kNeedle) - 1;
-            } else *o++ = str[i][k++];
-        }
-    }
-    *o = 0;
-    const char *one = src;
-    s_realShaderSource(shader, 1, &one, NULL);
-    free(src);
-}
 void *__wrap_SDL_GL_GetProcAddress(const char *proc)
 {
     extern void *emscripten_webgl_get_proc_address(const char *name);
-    void *p = emscripten_webgl_get_proc_address(proc);
-    if (p && !strcmp(proc, "glShaderSource")) { s_realShaderSource = (RtwShaderSourceFn)p; return (void *)rtwShaderSource; }
-    return p;
+    return emscripten_webgl_get_proc_address(proc);
 }
 int __wrap_SDL_GL_GetAttribute(SDL_GLattr attr, int *value)
 {
