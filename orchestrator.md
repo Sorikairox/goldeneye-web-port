@@ -60,7 +60,7 @@ it, don't append history) and the rules specific to this repo. Session history: 
   original behaviour.
 - Rename functions and variables you touch to readable names where the decomp left `func_`/`D_` names, with a
   `/* was ... */` comment, repo-wide via a script.
-- Browser tests: headless Chrome, muted, one Chrome run at a time; kill only PIDs you started; never `pkill`/`pgrep`.
+- Browser tests: Muted headless Chrome. Several Chromes may run in parallel (user, 2026-11-05), except timing-sensitive runs (audio, multi-player sync/hash runs, anything measuring frame timing), which take the shared lock `/private/tmp/claude-501/-Users-sorikairo/f93e1b8f-e755-4b7d-bb6c-314b0fa26874/scratchpad/chrome_lock.sh run <name> -- <cmd>` when another agent may be running. A test that fails while other Chromes ran is re-run alone before it counts as a real failure. Kill only PIDs you started; never `pkill`/`pgrep`.
 - No `git stash`. No system installs on the host without the user's approval: use Docker containers
   (`export PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH`; the Conker containers on this machine are
   not ours to touch, but its `conker-emsdk` image may be reused).
