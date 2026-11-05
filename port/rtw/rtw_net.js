@@ -41,7 +41,8 @@
 // game's .data/.bss, S lines = symbol names for the desync report) + the live EEPROM image; webnet.c adds the DRAM.
 var rtwNet = (function () {
   'use strict';
-  const RING = 256, HASH_EVERY = 10, MAX_IN = 64;
+  const RING = 256, HASH_EVERY = 10, MAX_IN = 64;   // HASH_EVERY = rtw.c RTW_HASH_EVERY
+  const HASH_MASK = ['g_GfxMemPos', 'g_gfxTaskSettings'];   // display-list records (rtw.c __wrap_geNetRetraceDone)
   const CH_IN = 0, CH_CTL = 1;
   const PEER_GONE = 0, PEER_CONNECTED = 1, PEER_SILENT = 2;
   const T_LOST = 1, T_HELD = 2, T_DROP = 3, T_DESYNC = 4, T_PAGES = 5;
@@ -153,6 +154,10 @@ var rtwNet = (function () {
       }
     }
     if (!S.regions) say('[net] ge007.netregions has no ranges: only the N64 DRAM is hashed');
+    // left out of the hash with the display lists (rtw.c __wrap_geNetRetraceDone): records that describe them
+    const masked = [];
+    for (const [a, n, name] of S.syms || []) if (HASH_MASK.includes(name) && wasm('ge_rtw_hash_mask_add')(a, n) > 0) masked.push(name);
+    say(`[net] left out of the hash with the display lists: ${masked.join(' ') || 'none'}`);
     if (wasm('ge_web_eeprom_image')) wasm('ge_net_region_add')(wasm('ge_web_eeprom_image')() >>> 0, 2048);   // the live EEPROM image (libultra.c)
     wasm('ge_net_session')((1 << S.players) - 1, 1 << S.me, S.delay, HASH_EVERY);
     S.sessionSet = true;
@@ -442,6 +447,9 @@ var rtwNet = (function () {
   // the ring's entries of channel ch for frames a..b (tests: the remote inputs that arrived)
   function ring(ch, a, b) { const list = []; for (let f = a; f <= b; f++) list.push(get(f, ch)); return list; }
   globalThis.__rtwGoldenEye = { Module, net: status, ring, frame: () => wasm('ge_net_frame')() >>> 0,
-    option: (id) => wasm('ge_rtw_option')(id, -1) };
+    option: (id) => wasm('ge_rtw_option')(id, -1), optionNow: (id) => wasm('ge_rtw_option_now')(id),
+    settings: () => ({ ...(typeof gertwSettings === 'object' && gertwSettings.rec || {}) }),
+    // test aid: set one of this player's own settings as the overlay would (record + live)
+    setOwn: (id, v) => { if (typeof gertwSettings === 'object') gertwSettings.put(id, v); wasm('ge_rtw_own_option')(id, v); } };
   return { begin, beforeMain, peerState, startTransport, recv, status, ring, get active() { return S.active; } };
 })();

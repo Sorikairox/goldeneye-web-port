@@ -62,8 +62,53 @@ addToLibrary({
     if (c && (c.width !== w || c.height !== h)) { c.width = w; c.height = h; }
   },
 
+  // ---- this player's settings record (rtw.c: the options not in the manifest, kept per player) -----------
+  // One small object { id: value } in this sandbox origin's IndexedDB (ge007-rtw / files, key settings-v1, beside the
+  // sidecar cache; the host never reads it), read at every start (sessions included) and written on every change.
+  $gertwSettings: {
+    KEY: 'settings-v1',
+    rec: null,
+    open() {
+      return new Promise((ok, bad) => {
+        const r = indexedDB.open('ge007-rtw', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('files');
+        r.onsuccess = () => ok(r.result);
+        r.onerror = () => bad(r.error);
+      });
+    },
+    async load() {
+      let v;
+      try {
+        if (typeof indexedDB !== 'undefined') {
+          const d = await gertwSettings.open();
+          v = await new Promise((ok) => {
+            const q = d.transaction('files').objectStore('files').get(gertwSettings.KEY);
+            q.onsuccess = () => { ok(q.result); d.close(); };
+            q.onerror = () => { ok(undefined); d.close(); };
+          });
+        }
+      } catch (e) { out('[rtw] settings record not read: ' + e); }
+      gertwSettings.rec = v && typeof v === 'object' ? { ...v } : {};
+      return gertwSettings.rec;
+    },
+    put(id, value) {
+      const rec = gertwSettings.rec || (gertwSettings.rec = {});
+      rec[id] = value;
+      if (typeof indexedDB === 'undefined') return;
+      const copy = { ...rec };
+      gertwSettings.open().then((d) => {
+        const tr = d.transaction('files', 'readwrite');
+        tr.objectStore('files').put(copy, gertwSettings.KEY);
+        tr.oncomplete = tr.onerror = tr.onabort = () => d.close();
+      }).catch((e) => out('[rtw] settings record not stored: ' + e));
+    },
+  },
+  gertw_settings_put__deps: ['$gertwSettings'],
+  gertw_settings_put__sig: 'vii',
+  gertw_settings_put: (id, value) => gertwSettings.put(id, value),
+
   // ---- start-up ----------------------------------------------------------------------------------------
-  $gertwBootAsync__deps: ['$FS'],
+  $gertwBootAsync__deps: ['$FS', '$gertwSettings'],
   $gertwBootAsync: async (romp, romlen) => {
     const M = Module;
     const EU_SHA1 = '167c3c433dec1f1eb921736f7d53fac8cb45ee31';
@@ -149,6 +194,12 @@ addToLibrary({
       FS.writeFile('/data/' + f, side[f]);
     }
     M._ge_rtw_rom_free();
+
+    // this player's own settings (not in the manifest): applied at every start, sessions included
+    const own = await gertwSettings.load();
+    const ownIds = Object.keys(own).filter((k) => Number.isInteger(own[k]));
+    for (const k of ownIds) M._ge_rtw_own_option(Number(k), own[k]);
+    log(`settings record: ${ownIds.length ? ownIds.map((k) => `${k}=${own[k]}`).join(' ') : 'empty (defaults)'}`);
 
     rtwNet.beforeMain();   // online play: webnet.c's session (ring, input delay, hashed ranges) before the first retrace
     M._ge_rtw_before_main();

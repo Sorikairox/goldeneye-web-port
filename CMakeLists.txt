@@ -534,6 +534,19 @@ if(EMSCRIPTEN AND GE_RTW)
   list(FILTER SRC_FAST3D EXCLUDE REGEX "port/fast3d/gfx_sdl2\\.cpp$")
   list(APPEND SRC_PORT "${CMAKE_SOURCE_DIR}/port/rtw/rtw.c")
   list(APPEND SRC_FAST3D "${CMAKE_SOURCE_DIR}/port/rtw/gfx_rtw.cpp")
+  # Online play: the options overlay opens during a session with only this player's own settings editable and the
+  # room host's shown locked (a build-dir copy, scripts/rtw/rtw_overlay_src.py; the shared source is untouched), and
+  # frontoptions.c (game state, hashed online) sees no overlay during a session (rtw.c geRtwOverlayOpenForGame).
+  set(_rtw_ov "${CMAKE_BINARY_DIR}/rtwfix/optionsoverlay.c")
+  add_custom_command(OUTPUT "${_rtw_ov}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/rtwfix"
+    COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/rtw/rtw_overlay_src.py" "${CMAKE_SOURCE_DIR}" "${_rtw_ov}"
+    DEPENDS "${CMAKE_SOURCE_DIR}/port/src/optionsoverlay.c" "${CMAKE_SOURCE_DIR}/scripts/rtw/rtw_overlay_src.py"
+    VERBATIM)
+  list(REMOVE_ITEM SRC_PORT "${CMAKE_SOURCE_DIR}/port/src/optionsoverlay.c")
+  list(APPEND SRC_PORT "${_rtw_ov}")
+  set_source_files_properties("${CMAKE_SOURCE_DIR}/port/src/frontoptions.c" PROPERTIES COMPILE_DEFINITIONS
+    "optionsOverlayIsOpen=geRtwOverlayOpenForGame;optionsOverlayToggle=geRtwOverlayToggleForGame")
   set(GE_ENV_LINK -sENVIRONMENT=worker -sMODULARIZE=1 -sEXPORT_NAME=createGoldenEye -sDYNAMIC_EXECUTION=0
     "--js-library=${CMAKE_SOURCE_DIR}/port/rtw/rtw_lib.js"
     "--pre-js=${CMAKE_SOURCE_DIR}/port/rtw/rtw_net.js"   # online play (standard 1.2): net.js's packet logic in the worker
@@ -544,7 +557,9 @@ if(EMSCRIPTEN AND GE_RTW)
     -Wl,--wrap=inputRumbleSupported -Wl,--wrap=inputRumble
     -Wl,--wrap=osContInit -Wl,--wrap=osContGetQuery -Wl,--wrap=osContGetReadData -Wl,--wrap=osContReset
     -Wl,--wrap=configRegisterInt -Wl,--wrap=configRegisterUInt -Wl,--wrap=configRegisterFloat
-    -Wl,--wrap=configRegisterString -Wl,--wrap=configSetOptionMeta)
+    -Wl,--wrap=configRegisterString -Wl,--wrap=configSetOptionMeta
+    # online state hash without the display lists (per-player picture settings change them; rtw.c)
+    -Wl,--wrap=geNetRetraceDone -Wl,--wrap=geNetHashBytes -Wl,--wrap=mempResetBank)
 else()
   set(GE_ENV_LINK -sENVIRONMENT=web)
 endif()

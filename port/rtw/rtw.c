@@ -36,6 +36,7 @@
 #include "platform.h"
 #include "system.h"
 #include "../src/web/webkernel.h"
+#include "portaddr.h"   /* PORT_DRAM_V1_BASE / PORT_DRAM_SIZE (the online hash mask) */
 
 /* ---- host imports (env.rtw_*, port/rtw/rtw_lib.js -> Module.rtw) --------------------------------------- */
 extern int rtw_log(const char *ptr, int len);
@@ -295,6 +296,7 @@ static int s_rumbleOn[4];
 static int geRtwRumbleSupported(int port)
 {
     if (!s_rumbleOpt || port < 0 || port > 3) return 0;
+    if (geNetSessionOn) return 0;   /* no Rumble Pak online (libultra.c); Vibration is each player's own */
     if (port == 0) return 1;
     return s_padSeen[port] != 0;
 }
@@ -441,15 +443,34 @@ void webPageInit(void) {}
 
 /* ---- options (§4.9): manifest ids -> the port's ini keys (docs/web/RTW.md) ------------------------------ */
 /* Standard 1.2: the host's menu shows only start-up options (16 Resolution, 2 Skip intro, 17 Online play, 18 Online
- * input delay). Every other one is "inGame": set in the game's own menu (the port's options overlay, opened with the
- * extra button Options: rtw has no F10 key), hidden in the host, which keeps the value the game reports with
- * env.rtw_option_changed and hands it back at the next start (and to every player of a lockstep session). The ini is
- * not kept in this build (MEMFS only), so this is also how those settings survive a restart. geRtwPump polls the
- * mapped config values once per frame and reports every change (not during a session: its values are fixed). */
+ * input delay). Every other setting is set in the game's own menu (the port's options overlay, opened with the extra
+ * button Options: rtw has no F10 key). The ini is not kept in this build (MEMFS only).
+ *
+ * Whose setting it is (user decision 2026-11-05, RTW.md "Options"): everything that changes how much a player sees
+ * follows the room host in a lockstep session, so nobody gets an edge; every other picture or feel setting stays each
+ * player's own. Offline every setting is the player's.
+ *  - The room host's: declared "inGame" in the manifest. The host keeps the value the game reports with
+ *    env.rtw_option_changed and hands it back at the next start, and the room host's value to every player of a
+ *    session (a session never reports, so a player's own stored value is untouched and back after it). 5 FOV and
+ *    6 draw distance (wider view, farther geometry: projection, culling and the room pool are game state), 12 No hit
+ *    flash (the white / red flash hides the view while hit; it also writes the player's fade state, which the game
+ *    reads), 11 screen shake (same reason), and the game rules 2, 3, 4, 8, 9 (mouse 3 / 4 are not used online).
+ *    In a session the overlay shows them locked ("Set by the room host during online play").
+ *  - The player's own: not in the manifest. This module keeps them in its own settings record (the worker's
+ *    IndexedDB, rtw_lib.js gertw_settings_put / the boot) and applies them at every start, sessions included:
+ *    1 aspect ratio (online the world is always projected at 4:3, geNetApplySessionConfig pins Native widescreen
+ *    off, so the aspect only stretches the picture or adds bars: no wider view), 7 texture filter, 13 HUD scale,
+ *    14 hide crosshair, 15 show FPS, 19 vibration (no Rumble Pak online anyway). None of them is in the online
+ *    state hash: 7 / 15 / 19 are port-side only, 1 changes the output rectangle only, 13 and (online) 14 change
+ *    only the game's display lists, which the hash leaves out (__wrap_geNetRetraceDone / __wrap_geNetHashBytes
+ *    below); online 14 is the crosshair's opacity (rtwCrosshairViaAlpha), because the game's own switch would
+ *    also skip the crosshair's texture load (the texture cache is game state).
+ *  - 16 Resolution (start-up, in the manifest): outside a session the host's value is copied into the record; a
+ *    session uses the record's copy, not the room host's (it is the buffer size only). */
 typedef struct { int id; const char *key; int kind; int lo, hi; } RtwOpt;   /* kind 0: value as is, 2: percent <-> factor */
 enum { OPT_RES = 16, OPT_ONLINE = 17, OPT_NETDELAY = 18, OPT_VIBRATION = 19 };   /* 17, 18: online play (rtw_net.js) */
 static const RtwOpt kOpts[] = {
-    { 1,  "Video.AspectMode", 0, 0, 3 },         /* 0 fill (Hor+ widescreen), 1 original 4:3, 2 16:9, 3 21:9 */
+    { 1,  "Video.AspectMode", 0, 0, 3 },         /* 0 fill, 1 original 4:3, 2 16:9, 3 21:9 (Hor+ offline, stretch online) */
     { 2,  "Game.SkipIntro", 0, 0, 1 },
     { 3,  "Input.MouseSensitivity", 0, 1, 500 },
     { 4,  "Input.MouseInvertY", 0, 0, 1 },
@@ -466,14 +487,44 @@ static const RtwOpt kOpts[] = {
     { OPT_VIBRATION, "Input.RumbleScale", 2, 0, 100 },   /* percent -> factor (was option 10, a bool, before 1.2) */
 };
 #define RTW_MAX_OPT 32
-static int s_optSet[RTW_MAX_OPT], s_optVal[RTW_MAX_OPT];
+static int s_optSet[RTW_MAX_OPT], s_optVal[RTW_MAX_OPT];   /* values from the host (rtw_option) */
+static int s_ownSet[RTW_MAX_OPT], s_ownVal[RTW_MAX_OPT];   /* this player's settings record (ge_rtw_own_option) */
 static int s_optSeen[RTW_MAX_OPT];   /* the manifest value of each mapped key as last applied / reported */
 static int s_optPoll;                /* geRtwPump reports changes (set after the start) */
+extern void gertw_settings_put(int id, int value);   /* rtw_lib.js: the settings record in the worker's IndexedDB */
+
+static int rtwOwnOption(int id)
+{
+    return id == 1 || id == 7 || id == 13 || id == 14 || id == 15 || id == OPT_VIBRATION;
+}
+/* the record's value wins for this id now (own options always; Resolution during a session) */
+static int rtwOwnWins(int id)
+{
+    return id >= 0 && id < RTW_MAX_OPT && s_ownSet[id] && (rtwOwnOption(id) || (id == OPT_RES && geNetSessionOn));
+}
+static void rtwKeepOwn(int id, int value)
+{
+    if (id < 0 || id >= RTW_MAX_OPT || (s_ownSet[id] && s_ownVal[id] == value)) return;
+    s_ownSet[id] = 1; s_ownVal[id] = value;
+    gertw_settings_put(id, value);
+}
+
+/* 14 Hide crosshair during a session: the game's own switch (Video.CrosshairHide) skips the sprite and so also its
+ * texture load into the game's texture cache, which is game state (online hash). Online the switch stays off on every
+ * peer and the player's choice is the sprite's opacity instead (Video.CrosshairAlpha 0 / 100: a display-list change
+ * only). The overlay row reads and writes it through geRtwOverlayRowGet / Set. */
+#define OPT_CROSSHAIR 14
+static int rtwCrosshairViaAlpha(void) { return geNetSessionOn; }
 
 /* the manifest value a mapped key has now (rounded, within the option's range); 0 = key not registered */
 static int optCurrent(const RtwOpt *o, int *out)
 {
     double v;
+    if (o->id == OPT_CROSSHAIR && rtwCrosshairViaAlpha()) {
+        if (!configGetValue("Video.CrosshairAlpha", &v)) return 0;
+        *out = v < 0.5 ? 1 : 0;
+        return 1;
+    }
     if (!configGetValue(o->key, &v)) return 0;
     if (o->kind == 2) v *= 100.0;
     int iv = (int)(v < 0 ? v - 0.5 : v + 0.5);
@@ -486,14 +537,13 @@ static const RtwOpt *optFind(int id)
     return NULL;
 }
 
-/* Online play (standard 1.2): every peer boots with the room host's option values (the host dictates them), so a
- * session starts from the same configuration everywhere. On top, webnet.c's geNetApplySessionConfig pins what the
- * web build's sessions pin (OG controls, no all-unlocked, 4:3 projection, no machine-dependent classification):
- * options 8 (All levels unlocked) and 9 (Control style) are not applied in a session. After the start the options
- * stay as they are for the whole session (the host's menu may still send rtw_option); only the ones that change
- * the picture alone (1 aspect of the output rectangle, 7 texture filter, 15 FPS counter, 16 resolution) follow it. */
+/* Online play (standard 1.2): every peer boots with the room host's values of the declared options, so a session
+ * starts from the same configuration everywhere. On top, webnet.c's geNetApplySessionConfig pins what the web build's
+ * sessions pin (OG controls, no all-unlocked, 4:3 projection, no machine-dependent classification): options 8 (All
+ * levels unlocked) and 9 (Control style) are not applied in a session. After the start the declared options stay as
+ * they are for the whole session; only 16 (resolution, the buffer size) follows a later rtw_option. */
 static int rtwSessionFixed(int id) { return geNetSessionOn && (id == 8 || id == 9); }
-static int rtwSessionLocal(int id) { return id == 1 || id == 7 || id == 15 || id == 16; }
+static int rtwSessionLocal(int id) { return id == OPT_RES; }
 
 static void optApply(int id, int value)
 {
@@ -503,6 +553,10 @@ static void optApply(int id, int value)
     const RtwOpt *o = optFind(id);
     if (!o) { sysLogPrintf(LOG_WARNING, "rtw: unknown option %d", id); return; }
     double v = o->kind == 2 ? value / 100.0 : value;
+    if (id == OPT_CROSSHAIR && rtwCrosshairViaAlpha()) {
+        configSetValue(o->key, 0);
+        configSetValue("Video.CrosshairAlpha", value ? 0 : 100);
+    } else
     if (!configSetValue(o->key, v)) { sysLogPrintf(LOG_WARNING, "rtw: option %d: %s not registered", id, o->key); return; }
     if (id == OPT_VIBRATION) {
         s_rumbleOpt = value > 0;
@@ -516,20 +570,44 @@ static void optApply(int id, int value)
     if (id >= 0 && id < RTW_MAX_OPT && optCurrent(o, &cur)) s_optSeen[id] = cur;   /* no echo to the host */
 }
 
+/* every value this start uses: the host's for the declared options, then the record's (own options, and
+ * Resolution during a session); outside a session the host's Resolution is copied into the record */
+static void rtwApplyAll(void)
+{
+    for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id] && !rtwOwnOption(id) && !rtwOwnWins(id)) optApply(id, s_optVal[id]);
+    for (int id = 0; id < RTW_MAX_OPT; id++) if (rtwOwnWins(id)) optApply(id, s_ownVal[id]);
+    if (!geNetSessionOn && s_optSet[OPT_RES]) rtwKeepOwn(OPT_RES, s_optVal[OPT_RES]);
+}
+
 /* once per frame (gfx_rtw.cpp handle_events): the options overlay requests (extra button Options, Start / B to
- * close) and the inGame options the player changed in it -> env.rtw_option_changed */
+ * close) and the settings the player changed in it: the player's own -> the settings record (sessions included);
+ * the room host's -> env.rtw_option_changed outside a session, put back during one (the overlay locks them; this
+ * catches any other path) */
 void geRtwPump(void)
 {
     if (!s_started) return;
-    if (s_ovReq) { s_ovReq = 0; optionsOverlayToggle(); }   /* refused during an online session (optionsoverlay.c) */
-    if (!s_optPoll || geNetSessionOn) return;
+    if (s_ovReq) { s_ovReq = 0; optionsOverlayToggle(); }
+    if (!s_optPoll) return;
     for (size_t i = 0; i < sizeof(kOpts) / sizeof(kOpts[0]); i++) {
         const RtwOpt *o = &kOpts[i];
         int cur;
         if (!optCurrent(o, &cur) || cur == s_optSeen[o->id]) continue;
+        if (rtwOwnOption(o->id)) {
+            s_optSeen[o->id] = cur;
+            if (o->id == OPT_VIBRATION) s_rumbleOpt = cur > 0;
+            rtwKeepOwn(o->id, cur);
+            rtwLog("rtw: option %d = %d changed in the game (%s), kept in this player's settings", o->id, cur, o->key);
+            continue;
+        }
+        if (geNetSessionOn) {
+            const int was = s_optSeen[o->id];
+            configSetValue(o->key, o->kind == 2 ? was / 100.0 : was);
+            videoRequestLiveConfigForKey(o->key);
+            rtwLog("rtw: option %d (%s) = %d is the room host's during online play: kept at %d", o->id, o->key, cur, was);
+            continue;
+        }
         s_optSeen[o->id] = cur;
         s_optVal[o->id] = cur; s_optSet[o->id] = 1;
-        if (o->id == OPT_VIBRATION) s_rumbleOpt = cur > 0;
         rtw_option_changed(o->id, cur);
         rtwLog("rtw: option %d = %d changed in the game (%s), told to the host", o->id, cur, o->key);
     }
@@ -537,12 +615,17 @@ void geRtwPump(void)
 
 EMSCRIPTEN_KEEPALIVE int rtw_option(int id, int value)
 {
+    if (rtwOwnOption(id)) {   /* not in the manifest: a host never sends it (an old stored manifest might) */
+        rtwLog("rtw: option %d = %d from the host ignored: this player's own setting", id, value);
+        return 0;
+    }
     if (s_started && geNetSessionOn && !rtwSessionLocal(id)) {
         rtwLog("rtw: option %d = %d ignored: an online session keeps the room host's options", id, value);
         return 0;
     }
     if (id >= 0 && id < RTW_MAX_OPT) { s_optSet[id] = 1; s_optVal[id] = value; }
-    if (s_bootReady) optApply(id, value);   /* before that: applied by ge_rtw_before_main */
+    if (id == OPT_RES && s_bootReady && !geNetSessionOn) rtwKeepOwn(id, value);
+    if (s_bootReady && !rtwOwnWins(id)) optApply(id, value);   /* before that: applied by ge_rtw_before_main */
     return 0;
 }
 
@@ -550,6 +633,165 @@ EMSCRIPTEN_KEEPALIVE int rtw_option(int id, int value)
 EMSCRIPTEN_KEEPALIVE int ge_rtw_option(int id, int def)
 {
     return id >= 0 && id < RTW_MAX_OPT && s_optSet[id] ? s_optVal[id] : def;
+}
+
+/* rtw_lib.js at the boot: one entry of this player's settings record (before ge_rtw_before_main) */
+EMSCRIPTEN_KEEPALIVE void ge_rtw_own_option(int id, int value)
+{
+    if (id < 0 || id >= RTW_MAX_OPT || (!rtwOwnOption(id) && id != OPT_RES)) return;
+    s_ownSet[id] = 1; s_ownVal[id] = value;
+    if (s_bootReady && rtwOwnWins(id)) optApply(id, value);
+}
+
+/* test aid (__rtwGoldenEye.optionNow): the value a mapped option has in the game now, -1 = unknown */
+EMSCRIPTEN_KEEPALIVE int ge_rtw_option_now(int id)
+{
+    if (id == OPT_RES) return s_resOpt;
+    const RtwOpt *o = optFind(id);
+    int cur;
+    return o && optCurrent(o, &cur) ? cur : -1;
+}
+
+/* ---- the options overlay during an online session (the build's copy of optionsoverlay.c,
+ * scripts/rtw/rtw_overlay_src.py) -------------------------------------------------------------------------- */
+int geRtwOverlaySession(void) { return geNetSessionOn; }
+/* 0 hidden, 1 this player's own (editable), 2 the room host's (shown locked), 3 navigation, 4 page link */
+int geRtwOverlayRowKind(const char *key)
+{
+    if (!key) return 0;
+    if (!strncmp(key, "__Back", 6) || (!strncmp(key, "__Sep", 5) && strcmp(key, "__SepHub"))) return 3;
+    if (!strcmp(key, "__SelPlayerC1")) return 4;   /* Controller page (Vibration) */
+    for (size_t i = 0; i < sizeof(kOpts) / sizeof(kOpts[0]); i++)
+        if (!strcmp(key, kOpts[i].key)) return rtwOwnOption(kOpts[i].id) ? 1 : 2;
+    return 0;
+}
+int geRtwOverlayRowGet(const char *key, double *v)
+{
+    if (!rtwCrosshairViaAlpha() || strcmp(key, "Video.CrosshairHide")) return 0;
+    int cur = 0;
+    optCurrent(optFind(OPT_CROSSHAIR), &cur);
+    *v = cur;
+    return 1;
+}
+int geRtwOverlayRowSet(const char *key, double v)
+{
+    if (!rtwCrosshairViaAlpha() || strcmp(key, "Video.CrosshairHide")) return 0;
+    configSetValue("Video.CrosshairAlpha", v >= 0.5 ? 0 : 100);   /* geRtwPump records the change */
+    return 1;
+}
+int geRtwOverlayRowLocked(const char *key)
+{
+    if (!geNetSessionOn) return 0;
+    const int k = geRtwOverlayRowKind(key);
+    return k == 0 || k == 2;
+}
+/* frontoptions.c (hashed game state) sees the overlay through these (CMake GE_RTW compile definitions): during a
+ * session the overlay is one player's alone, so the game must not notice it (file select resets its idle timer
+ * while it is open) and the file-select "PC Options" label opens nothing (the extra button Options does) */
+int geRtwOverlayOpenForGame(void) { return geNetSessionOn ? 0 : optionsOverlayIsOpen(); }
+void geRtwOverlayToggleForGame(void)
+{
+    if (geNetSessionOn) { rtwLog("rtw: file select options label ignored during online play (use the Options button)"); return; }
+    optionsOverlayToggle();
+}
+
+/* ---- the online state hash without the display lists ------------------------------------------------------ */
+/* webkernel.c calls geNetRetraceDone at the end of every retrace; at every HASH_EVERY-th one (rtw_net.js passes 10 to
+ * ge_net_session) webnet.c hashes the game's data and the 8 MiB N64 DRAM. That includes the game's display-list
+ * output: the gfx pool (g_GfxBuffers, in the stage bank) and the vtx pool (g_VtxBuffers, vertices / matrices, DRAM
+ * + 0x700000), plus a few static records that describe them (rtw_net.js passes their ranges from the netregions
+ * symbols: the vtx cursor g_GfxMemPos, the RSP task records g_gfxTaskSettings with the list's length). They are
+ * output only, rebuilt every frame from the game state, but the player's own HUD scale and Hide crosshair change
+ * them. During a session they are blanked for the hash and restored at once (nothing runs in between), so every peer
+ * hashes the same bytes there. */
+#define RTW_HASH_EVERY 10   /* = rtw_net.js HASH_EVERY */
+#define RTW_MASK_MAX 16
+extern uint8_t *g_GfxBuffers[3];
+extern uint8_t *g_VtxBuffers[3];
+extern unsigned geNetRetrace(void);
+extern int geNetDetOn;
+void __real_geNetRetraceDone(void);
+static struct { uintptr_t a; size_t n; } s_maskStatic[RTW_MASK_MAX];
+static int s_nMaskStatic;
+static uint8_t *s_maskSave;
+static size_t s_maskCap;
+
+/* rtwNet.beforeMain: one static range left out of the online hash (a symbol of ge007.netregions) */
+EMSCRIPTEN_KEEPALIVE int ge_rtw_hash_mask_add(uint32_t addr, uint32_t len)
+{
+    if (s_nMaskStatic >= RTW_MASK_MAX || !addr || !len || len > 0x10000) return -1;
+    s_maskStatic[s_nMaskStatic].a = addr; s_maskStatic[s_nMaskStatic].n = len;
+    return ++s_nMaskStatic;
+}
+
+static int rtwDramSpan(uint8_t *a, uint8_t *b, uintptr_t *at, size_t *len)
+{
+    const uintptr_t lo = (uintptr_t)PORT_DRAM_V1_BASE, hi = lo + (uintptr_t)PORT_DRAM_SIZE;
+    if (!a || !b || b <= a || (uintptr_t)a < lo || (uintptr_t)b > hi) return 0;
+    *at = (uintptr_t)a; *len = (size_t)(b - a);
+    return 1;
+}
+
+/* The second half of the state hash, S, covers the game fibers' saved locals (webkernel.c webkernelStackHash, the
+ * asyncify buffers). A fiber that waits while a frame of it holds a display-list position keeps that pointer there,
+ * so a different HUD scale changes S too. webkernel.c's only use of geNetHashBytes is that stack hash (webnet.c
+ * calls its own copy inside its file, not wrapped): during a session the wrap hashes a copy in which every 32-bit
+ * word that points into the gfx or vtx pool reads 0. */
+uint32_t __real_geNetHashBytes(const void *p, uint32_t n, uint32_t seed);
+static uint8_t *s_stackCopy;
+static size_t s_stackCap;
+uint32_t __wrap_geNetHashBytes(const void *p, uint32_t n, uint32_t seed)
+{
+    uintptr_t ga = 0, va = 0; size_t gl = 0, vl = 0;
+    const int g = geNetSessionOn && rtwDramSpan(g_GfxBuffers[0], g_GfxBuffers[2], &ga, &gl);
+    const int v = geNetSessionOn && rtwDramSpan(g_VtxBuffers[0], g_VtxBuffers[2], &va, &vl);
+    if ((!g && !v) || n < 4) return __real_geNetHashBytes(p, n, seed);
+    if (n > s_stackCap) {
+        uint8_t *q = (uint8_t *)realloc(s_stackCopy, n);
+        if (!q) return __real_geNetHashBytes(p, n, seed);
+        s_stackCopy = q; s_stackCap = n;
+    }
+    memcpy(s_stackCopy, p, n);
+    for (uint32_t o = 0; o + 4 <= n; o += 4) {
+        uint32_t w; memcpy(&w, s_stackCopy + o, 4);
+        if ((g && w >= ga && w < ga + gl) || (v && w >= va && w < va + vl)) memset(s_stackCopy + o, 0, 4);
+    }
+    return __real_geNetHashBytes(s_stackCopy, n, seed);
+}
+
+/* A new stage (boss.c) resets the stage bank, where the gfx pool lived: from then on those bytes are free memory the
+ * new stage overwrites bit by bit, no longer masked (g_GfxBuffers moves), but still holding each peer's own last
+ * display lists. During a session they are zeroed right there, on every peer alike (the game never reads memory it
+ * has not written; on the N64 the same bytes simply keep stale data). */
+#define RTW_MEMPOOL_STAGE 4   /* src/memp.h enum MEMPOOL */
+void __real_mempResetBank(uint8_t bank);
+void __wrap_mempResetBank(uint8_t bank)
+{
+    uintptr_t a; size_t n;
+    if (geNetSessionOn && bank == RTW_MEMPOOL_STAGE && rtwDramSpan(g_GfxBuffers[0], g_GfxBuffers[2], &a, &n))
+        memset((void *)a, 0, n);
+    __real_mempResetBank(bank);
+}
+
+void __wrap_geNetRetraceDone(void)
+{
+    if (!geNetSessionOn || !geNetDetOn || geNetRetrace() % RTW_HASH_EVERY != 0) { __real_geNetRetraceDone(); return; }
+    struct { uintptr_t a; size_t n; } span[RTW_MASK_MAX + 2];
+    int n = 0;
+    if (rtwDramSpan(g_GfxBuffers[0], g_GfxBuffers[2], &span[n].a, &span[n].n)) n++;
+    if (rtwDramSpan(g_VtxBuffers[0], g_VtxBuffers[2], &span[n].a, &span[n].n)) n++;
+    for (int i = 0; i < s_nMaskStatic; i++) { span[n].a = s_maskStatic[i].a; span[n].n = s_maskStatic[i].n; n++; }
+    size_t need = 0;
+    for (int i = 0; i < n; i++) need += span[i].n;
+    if (need > s_maskCap) {
+        uint8_t *p = (uint8_t *)realloc(s_maskSave, need);
+        if (!p) { __real_geNetRetraceDone(); return; }   /* cannot happen; would only risk a false desync report */
+        s_maskSave = p; s_maskCap = need;
+    }
+    size_t o = 0;
+    for (int i = 0; i < n; i++) { memcpy(s_maskSave + o, (void *)span[i].a, span[i].n); memset((void *)span[i].a, 0, span[i].n); o += span[i].n; }
+    __real_geNetRetraceDone();
+    for (int i = n - 1; i >= 0; i--) { o -= span[i].n; memcpy((void *)span[i].a, s_maskSave + o, span[i].n); }
 }
 
 /* ---- start (§4.3 step 6) ----------------------------------------------------------------------------- */
@@ -580,7 +822,7 @@ EMSCRIPTEN_KEEPALIVE void ge_rtw_before_main(void)
         eepConvert(s_portImg, 0);
         ge_web_eeprom_load((uint32_t)(uintptr_t)s_portImg, RTW_EEP_PORT);
     }
-    for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id]) optApply(id, s_optVal[id]);
+    rtwApplyAll();
     ge_web_touch(1, 0, 0, 0);   /* host pad 0 = controller 0 with the N64 roles (see rtw_input) */
 }
 
@@ -588,11 +830,11 @@ EMSCRIPTEN_KEEPALIVE void ge_rtw_before_main(void)
 EMSCRIPTEN_KEEPALIVE void ge_rtw_after_main(void)
 {
     s_started = 1;
-    /* the boot's video / input defaults ran (D546 migrations, low-end check): the host's options win */
-    for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id]) optApply(id, s_optVal[id]);
-    for (int id = 0; id < RTW_MAX_OPT; id++) if (s_optSet[id] && id != OPT_RES && !rtwSessionFixed(id)) {
-        for (size_t i = 0; i < sizeof(kOpts) / sizeof(kOpts[0]); i++)
-            if (kOpts[i].id == id) videoRequestLiveConfigForKey(kOpts[i].key);
+    /* the boot's video / input defaults ran (D546 migrations, low-end check): the host's and the record's values win */
+    rtwApplyAll();
+    for (int id = 0; id < RTW_MAX_OPT; id++) if ((s_optSet[id] || rtwOwnWins(id)) && id != OPT_RES && !rtwSessionFixed(id)) {
+        const RtwOpt *o = optFind(id);
+        if (o) videoRequestLiveConfigForKey(o->key);
     }
     if (geNetSessionOn) geNetApplySessionConfig();   /* online: the session's fixed values stand after the boot's defaults */
     for (size_t i = 0; i < sizeof(kOpts) / sizeof(kOpts[0]); i++) {   /* the values now are the reference for changes */
