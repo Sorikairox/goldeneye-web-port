@@ -3,7 +3,10 @@
 Plan and decisions: `docs/web/PLAN.md`. Rules: `orchestrator.md`. Playbook: `WEB_PORT_ORCHESTRATOR.md`.
 Session log: `docs/web/sessions.tsv`.
 
-## Current state (after G3 .. G16, 2026-11-05)
+## Current state (after G3 .. G17, 2026-11-05)
+
+G17: **retrowser cartridge picture** (section "Cartridge picture (G17)" below): the manifest's standard 1.2 `picture`
+is the official EU box art. rtw output only; the site build is byte-identical. Not deployed.
 
 G16: **retrowser online play: view settings follow the room host, picture / feel settings are each player's own**
 (section "Whose setting it is online (G16)" below; RTW.md "Whose setting it is (G16 ...)"). rtw build only; the site
@@ -77,6 +80,25 @@ G3 (level sweep, page polish, split-screen; details `docs/web/LEVELS.md`):
   were visibly wrong before.
 - **Docker:** Desktop crashed four times on 2026-10-29 (file-sharing event channel); causes and the
   rules now in the scripts: see "Traps found in G3".
+
+## Cartridge picture (G17, 2026-11-05)
+
+retrowser standard 1.2 (retrowser 82b624b) shows a manifest `picture` as the label of a drawn N64 cartridge. User
+decision: the official box art. File: libretro-thumbnails, Nintendo_-_Nintendo_64 / Named_Boxarts /
+"GoldenEye 007 (Europe).png" (PNG 512x374, 230608 B, sha256 926e59db5883cc5c…), committed as source art
+`art/cover.png` (outside `retrowser/`, which `publish_rtw.sh` wipes).
+- `scripts/rtw/retrowser.template.json` has `picture` { path `cover.png`, credit `Box art © Nintendo / Rare; James
+  Bond © Danjaq / MGM · image from libretro-thumbnails` }. `build_rtw.sh` copies the art into build/rtw before hashing.
+  `publish_rtw.sh` copies it into build/rtw too and puts the template's `picture` into build/rtw/retrowser.json, then
+  re-hashes it (so `--no-build` works on a build made before G17; the game files are unchanged), copies it to
+  `retrowser/cover.png` (root manifest path `retrowser/cover.png`) and adds `cover.png` to `rtw-dist`.
+- README retrowser section: the credit plus "the box art belongs to its owners and is only used here to identify the game".
+- Run: retrowser `npm run build` (dist/tools/rtw.mjs), then `publish_rtw.sh --no-build --dist` (build/rtw had the
+  same bytes as the committed `retrowser/` files of 51bedc95; no wasm rebuild). `rtw.mjs check . --rom
+  ~/roms/GoldenEye_007_Europe.z64` OK (build id 25403c4d…), build/rtw and the rtw-dist tree OK (407555b5…); romscan
+  PASS; rtw-dist e2b5d4b1. build-web/site untouched (16 files, same SHA-256 before and after).
+- Changing the picture: replace `art/cover.png` (PNG/JPEG/WebP, <= 512 KiB, <= 4096 px; N64 label crops to 4:3),
+  update the credit in the template + README, run `publish_rtw.sh --no-build --dist`.
 
 ## Whose setting it is online (G16, 2026-11-05)
 

@@ -13,6 +13,9 @@ Saves stay in your browser; use **Export save** in ☰ to keep a copy. After the
 Online multiplayer is only on the port's own site for now. retrowser runs this repository's own build (`retrowser.json`
 and `retrowser/`); it hosts no game code and no ROMs.
 
+Cartridge picture: Box art © Nintendo / Rare; James Bond © Danjaq / MGM · image from libretro-thumbnails.
+The box art belongs to its owners and is only used here to identify the game.
+
 ---
 
 # GoldenEye 007 PC Port
