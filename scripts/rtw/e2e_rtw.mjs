@@ -65,6 +65,7 @@ const profile = join(outDir, 'profile');
 rmSync(profile, { recursive: true, force: true });
 const ctx = await chromium.launchPersistentContext(profile, {
   executablePath: chromePath, headless: true, viewport: { width: 1024, height: 768 },
+  reducedMotion: 'reduce', // the game page's cartridge floats otherwise, and a click waits for it to stand still
   args: ['--mute-audio', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'],
 });
 await ctx.addInitScript(([ep, dev]) => {
@@ -101,8 +102,12 @@ async function waitLog(re, secs) {
 }
 async function openGame(stored) {
   await page.goto(`${site}/g/rtw-test/goldeneye-eu`);
-  await page.click('[data-action=download]', { timeout: 120000 });
-  if (stored) { await page.waitForSelector('[data-action=use-stored]', { timeout: 120000 }); await page.click('[data-action=use-stored]'); }
+  // the game page is the cartridge alone (retrowser 2026-11-07): tapping it downloads; a remembered ROM starts at once
+  await page.click('.cart', { timeout: 120000 });
+  if (stored) {
+    await page.waitForSelector('[data-state=playing], [data-action=use-stored]', { timeout: 120000 });
+    if (await page.$('[data-action=use-stored]')) await page.click('[data-action=use-stored]');
+  }
   else {
     await page.waitForSelector('[data-field=rom]', { state: 'attached', timeout: 180000 });
     const remember = await page.$('[data-field=remember]');
@@ -166,7 +171,7 @@ try {
     await page.reload();
     await sleep(3000);
     writeFileSync(join(outDir, 'reload-page.txt'), await page.evaluate(() => document.body.innerText));
-    if (await page.$('[data-action=download]')) await page.click('[data-action=download]');
+    if (await page.$('.cart')) await page.click('.cart');
     await sleep(2000);
     if (await page.$('[data-action=use-stored]')) await page.click('[data-action=use-stored]');
     else if (await page.$('[data-field=rom]')) await page.setInputFiles('[data-field=rom]', ROM);
@@ -195,11 +200,12 @@ try {
     await stopHost();
     await mock.close();
     await page.reload();
-    await page.waitForSelector('[data-action=download]', { timeout: 60000 });
-    await page.click('[data-action=download]');
+    await page.waitForSelector('.cart', { timeout: 60000 });
+    await page.click('.cart');
     await sleep(3000);
     if (await page.$('[data-action=use-stored]')) { await page.click('[data-action=use-stored]'); console.log('offline: remembered ROM'); }
-    else { await page.setInputFiles('[data-field=rom]', ROM); console.log('offline: ROM chosen again (none remembered)'); }
+    else if (await page.$('[data-field=rom]')) { await page.setInputFiles('[data-field=rom]', ROM); console.log('offline: ROM chosen again (none remembered)'); }
+    else console.log('offline: remembered ROM (started at once)');
     await page.waitForSelector('[data-state=playing]', { timeout: 120000 });
     check('offline: boot from the caches', await waitLog(/rtw: game started/, 120));
     check('offline: sidecars from the sandbox IndexedDB', /sidecars from IndexedDB/.test(await logOf()));

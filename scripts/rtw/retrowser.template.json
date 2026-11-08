@@ -3,15 +3,10 @@
   "id": "goldeneye-eu",
   "title": "GoldenEye 007 (Europe)",
   "platform": "n64",
-  "rom": {
-    "accept": [".z64", ".n64", ".v64"],
-    "sha1": ["167c3c433dec1f1eb921736f7d53fac8cb45ee31"],
-    "byteswap": "auto",
-    "maxSize": 16777216
-  },
+  "rom": { "sha1": ["167c3c433dec1f1eb921736f7d53fac8cb45ee31"] },
   "files": {
     "wasm": { "path": "ge007.wasm", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 },
-    "js": { "path": "ge007.js", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 },
+    "js": { "path": "ge007.js", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0, "factory": "createGoldenEye" },
     "data": [
       { "path": "ge007.romfill", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 },
       { "path": "ge007.netregions", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 }
@@ -20,10 +15,9 @@
   "picture": { "path": "cover.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0,
                "credit": "Box art © Nintendo / Rare; James Bond © Danjaq / MGM · image from libretro-thumbnails" },
   "icon": { "path": "icon.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0 },
-  "module": { "factory": "createGoldenEye", "loop": "mainloop" },
   "video": "webgl",
   "hz": 50,
-  "memory": { "initialMB": 384, "maximumMB": 384, "memory64": true },
+  "memory": { "initialMB": 384, "maximumMB": 384 },
   "save": { "kind": "eeprom", "size": 512 },
   "controls": {
     "extra": [

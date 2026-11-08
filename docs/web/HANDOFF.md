@@ -930,3 +930,17 @@ Second session's own containers: `GE_DEV=goldeneye-g4-dev` (build volume `golden
    merged string pool, or a user decision that they count as "small constants" (ROMDATA.md section 6).
 2. Fill table keyed by (symbol, offset) and committed, so a stripped build does not need the ROM.
 3. Any deploy script must call `scripts/web/deploy_check.sh` first.
+
+## Simplified retrowser standard (G19, 2026-11-09)
+
+retrowser's standard dropped its versions and some fields (retrowser 66418df, deployed 2026-11-09 as Worker version
+9b474bc0). User: "Then update Conker's and GoldenEye". `scripts/rtw/retrowser.template.json` and the root
+`retrowser.json`: no `module` (the loop is read from the module: no `rtw_frame` export = self-running; ge007.wasm
+exports none), `factory` moved into `files.js`, `rom.accept` (the N64 default), `rom.byteswap`, `rom.maxSize` and
+`memory.memory64` (read from the wasm) removed. The wasm and data files are unchanged; new build id c9211701768676de.
+`scripts/rtw/e2e_rtw.mjs` follows the game page of 2026-11-07 (the cartridge alone: `.cart` instead of the Download
+button, a remembered ROM starts at once, reduced motion so the cartridge stands still). Tests: `rtw.mjs check --rom`
+OK; `e2e_rtw.mjs offline` on a copy of the repo layout in the new built host: PASS (boot, Start, audio, offline from
+the caches, no page errors); level select looked at. Not pushed (the user asked only for the update). The rtw-dist
+branch is not refreshed (`publish_rtw.sh --no-build --dist` would rebuild it from the template).
+
