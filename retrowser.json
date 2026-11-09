@@ -4,16 +4,9 @@
   "title": "GoldenEye 007 (Europe)",
   "platform": "n64",
   "rom": {
-    "accept": [
-      ".z64",
-      ".n64",
-      ".v64"
-    ],
     "sha1": [
       "167c3c433dec1f1eb921736f7d53fac8cb45ee31"
-    ],
-    "byteswap": "auto",
-    "maxSize": 16777216
+    ]
   },
   "files": {
     "wasm": {
@@ -24,7 +17,8 @@
     "js": {
       "path": "ge007.js",
       "sha256": "d834ba6499d535d3f266efe084fb37057c566727a833dc41b43b7ea79d2d8a8b",
-      "size": 488390
+      "size": 488390,
+      "factory": "createGoldenEye"
     },
     "data": [
       {
@@ -50,16 +44,11 @@
     "sha256": "6708f69fac5b3121b9169158850f2cc9e919384cbcbe84bc0b564f1bf83c83ee",
     "size": 3575
   },
-  "module": {
-    "factory": "createGoldenEye",
-    "loop": "mainloop"
-  },
   "video": "webgl",
   "hz": 50,
   "memory": {
     "initialMB": 384,
-    "maximumMB": 384,
-    "memory64": true
+    "maximumMB": 384
   },
   "save": {
     "kind": "eeprom",
